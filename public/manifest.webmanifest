@@ -1,0 +1,10 @@
+{
+  "name": "Salua",
+  "short_name": "Salua",
+  "description": "Tu historia clínica, bajo tu control.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d2950",
+  "theme_color": "#0b91f2",
+  "icons": []
+}
