@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@theme {
+  /* Salua brand */
+  --color-salua-navy: #0d2950;
+  --color-salua-blue: #0b91f2;
+  --color-salua-turquoise: #0fb3aa;
+}

@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+build/
+next-env.d.ts
+*.tsbuildinfo
+
+# Serwist / PWA generated files
+dev-dist/
+public/sw*
+public/swe-worker-*
+
+# Env - never commit secrets (see .env.example for the names)
+.env
+.env.*
+!.env.example
+
+# Tests / logs
+playwright-report/
+test-results/
+coverage/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
