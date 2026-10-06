@@ -26,8 +26,36 @@
   --color-salua-error-soft: #fbe9ec;
   --color-salua-mute-soft: #eef1f5;
 
+  --color-salua-sky: #e6f3fd;
+  --color-salua-sky-line: #d3e8fa;
+  --color-salua-sky-ink: #0a5a9c;
+  --color-salua-mint: #e3f6f4;
+  --color-salua-mint-line: #cdedea;
+  --color-salua-mint-ink: #0b5f5a;
+  --color-salua-navy-ink: #c9d6e8;
+  --color-salua-navy-accent: #9fd8f7;
+  --color-salua-track: rgba(13, 41, 80, 0.09);
+
+  --breakpoint-bento: 73.75rem;
+
   --shadow-card: 0 8px 32px rgba(24, 60, 103, 0.06);
+  --shadow-tile: 0 12px 32px -16px rgba(24, 60, 103, 0.18);
   --ease-out-soft: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --animate-number-swap: number-swap 280ms cubic-bezier(0.23, 1, 0.32, 1);
+
+  @keyframes number-swap {
+    from {
+      filter: blur(6px);
+      opacity: 0.3;
+      transform: translateY(8px);
+    }
+    to {
+      filter: none;
+      opacity: 1;
+      transform: none;
+    }
+  }
 }
 
 @theme inline {
@@ -126,5 +154,8 @@
   }
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-primary;
+  }
+  ::selection {
+    @apply bg-[#cfe6fa] text-salua-navy;
   }
 }

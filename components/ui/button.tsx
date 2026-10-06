@@ -17,6 +17,7 @@ const buttonVariants = cva(
           "text-primary hover:bg-accent aria-expanded:bg-accent",
         destructive:
           "border-[#e8b9c0] bg-card text-salua-error-ink hover:bg-salua-error-soft",
+        white: "bg-white text-salua-navy hover:bg-salua-sky",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

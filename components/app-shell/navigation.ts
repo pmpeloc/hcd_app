@@ -20,6 +20,8 @@ export type NavItem = {
 
 export type ShellRole = 'patient' | 'doctor';
 
+export type NavBadges = Partial<Record<string, number>>;
+
 export const NAVIGATION: Record<ShellRole, NavItem[]> = {
   patient: [
     { href: '/inicio', label: 'Inicio', shortLabel: 'Inicio', icon: House },

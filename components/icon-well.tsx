@@ -17,9 +17,9 @@ export function IconWell({ tone = 'blue', size = 44, className, children }: Icon
   return (
     <span
       aria-hidden="true"
-      style={{ width: size, height: size }}
+      style={{ '--well': `${size}px` } as React.CSSProperties}
       className={cn(
-        'grid shrink-0 place-items-center rounded-full [&_svg]:size-[45%] [&_svg]:stroke-[1.75]',
+        'grid size-(--well) shrink-0 place-items-center rounded-full [&_svg]:size-[45%] [&_svg]:stroke-[1.75]',
         TONES[tone],
         className,
       )}
