@@ -49,6 +49,26 @@ export function parseQrPayload(raw: string): QrSession | null {
   return { code, account, expiresAt: expires * 1000 };
 }
 
+const CODE_PATTERN = new RegExp(`^SAL-[${CODE_ALPHABET}]{4}$`);
+
+/** Normalizes a typed code (`sal 4f7k`, `4F7K`) to `SAL-4F7K`. Returns `null` when it can't be a code. */
+export function normalizeCode(input: string): string | null {
+  const compact = input.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const body = compact.length > 4 && compact.startsWith('SAL') ? compact.slice(3) : compact;
+  const code = `SAL-${body}`;
+  return CODE_PATTERN.test(code) ? code : null;
+}
+
+export function secondsUntil(expiresAt: number): number {
+  return Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+}
+
+export function formatClock(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 export function shortAccount(account: string): string {
   return account.length > 10 ? `${account.slice(0, 4)}…${account.slice(-4)}` : account;
 }

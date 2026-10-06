@@ -10,21 +10,19 @@ import { Tile, TileCross } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { QrCode } from './qr-code';
-import { QR_TTL_SECONDS, createQrSession, encodeQrPayload, shortAccount, type QrSession } from './qr-session';
+import {
+  QR_TTL_SECONDS,
+  createQrSession,
+  encodeQrPayload,
+  formatClock,
+  secondsUntil,
+  shortAccount,
+  type QrSession,
+} from './qr-session';
 
 const LOW_SECONDS = 30;
 
 type Phase = 'loading' | 'ready' | 'error';
-
-function secondsUntil(expiresAt: number) {
-  return Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
-}
-
-function formatClock(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
 
 export function PatientQr({ patientName }: { patientName: string }) {
   const [session, setSession] = useState<QrSession | null>(null);
