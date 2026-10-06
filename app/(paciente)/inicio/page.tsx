@@ -1,7 +1,5 @@
+import { PageHeader } from '@/components/page-header';
+
 export default function PatientHomePage() {
-  return (
-    <main className="p-8">
-      <h1 className="text-2xl font-bold text-salua-navy">Inicio del paciente</h1>
-    </main>
-  );
+  return <PageHeader title="Hola, Ana" description="Tu historia clínica, bajo tu control." />;
 }
