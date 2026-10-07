@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { connection } from 'next/server';
+import { ShellFirstName } from '@/components/app-shell/session-shell';
 import { ScanLine, Upload } from 'lucide-react';
 import { BigNumber } from '@/components/big-number';
 import { ProgressTrack } from '@/components/progress-track';
@@ -8,7 +9,7 @@ import { Tile, TileCross, TileDots } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 import { UserAvatar } from '@/components/user-avatar';
 
-const DOCTOR = { lastName: 'Dra. Ríos', clinic: 'Clínica del Sol' };
+const DOCTOR = { clinic: 'Clínica del Sol' };
 
 const NEXT_PATIENT = { name: 'Ana Martínez', time: '14:30' };
 
@@ -57,7 +58,7 @@ export default async function DoctorHomePage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-[28px] lg:text-[34px] lg:tracking-[-0.03em]">
-            {greeting(now)}, {DOCTOR.lastName}
+            {greeting(now)}, <ShellFirstName />
           </h1>
           <p className="mt-1 text-[15px] text-muted-foreground">
             {longDate(now)} · {DOCTOR.clinic}

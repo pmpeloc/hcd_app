@@ -1,7 +1,9 @@
+import Link from 'next/link';
 import { Bell } from 'lucide-react';
 import { IconWell } from '@/components/icon-well';
 import { SaluaLogo } from '@/components/salua-logo';
 import { UserAvatar } from '@/components/user-avatar';
+import { cn } from '@/lib/utils';
 import { BottomNav } from './bottom-nav';
 import type { NavBadges, ShellRole } from './navigation';
 import { SidebarNav } from './sidebar-nav';
@@ -24,6 +26,8 @@ type AppShellProps = {
   badges?: NavBadges;
   unreadNotifications?: number;
   topBar?: React.ReactNode;
+  /** Where the user block in the sidebar leads (account and sign-out). */
+  accountHref?: string;
   children: React.ReactNode;
 };
 
@@ -42,7 +46,32 @@ function NotificationsButton({ unread = 0 }: { unread?: number }) {
   );
 }
 
-export function AppShell({ role, user, note, badges, unreadNotifications, topBar, children }: AppShellProps) {
+function ShellUserBlock({ user, href, className }: { user: ShellUser; href?: string; className?: string }) {
+  const content = (
+    <>
+      <UserAvatar name={user.name} />
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold text-salua-navy">{user.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{user.subtitle}</p>
+      </div>
+    </>
+  );
+  if (!href) return <div className={cn('flex items-center gap-2.5 px-1.5', className)}>{content}</div>;
+  return (
+    <Link
+      href={href}
+      aria-label={`Tu cuenta: ${user.name}`}
+      className={cn(
+        '-mx-1.5 flex items-center gap-2.5 rounded-2xl px-3 py-2 transition-colors duration-200 hover:bg-[#f1f4f8]',
+        className,
+      )}
+    >
+      {content}
+    </Link>
+  );
+}
+
+export function AppShell({ role, user, note, badges, unreadNotifications, topBar, accountHref, children }: AppShellProps) {
   return (
     <div className="min-h-dvh lg:flex">
       <aside className="sticky top-0 hidden h-dvh w-66 shrink-0 flex-col gap-6 border-r border-sidebar-border bg-sidebar px-[18px] py-6 lg:flex">
@@ -59,13 +88,7 @@ export function AppShell({ role, user, note, badges, unreadNotifications, topBar
             <p className="mt-2 text-[13px] leading-normal text-muted-foreground">{note.body}</p>
           </div>
         )}
-        <div className={note ? 'flex items-center gap-2.5 px-1.5' : 'mt-auto flex items-center gap-2.5 px-1.5'}>
-          <UserAvatar name={user.name} />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-salua-navy">{user.name}</p>
-            <p className="truncate text-xs text-muted-foreground">{user.subtitle}</p>
-          </div>
-        </div>
+        <ShellUserBlock user={user} href={accountHref} className={note ? undefined : 'mt-auto'} />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

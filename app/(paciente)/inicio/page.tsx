@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Activity, ChevronRight, FileText, Image as ImageIcon, QrCode, type LucideIcon } from 'lucide-react';
+import { ShellFirstName } from '@/components/app-shell/session-shell';
 import { BigNumber } from '@/components/big-number';
 import { IconWell } from '@/components/icon-well';
 import { ProgressTrack } from '@/components/progress-track';
@@ -39,7 +40,9 @@ const ACCESS_LOG = [
 export default function PatientHomePage() {
   return (
     <>
-      <h1 className="text-[28px] lg:text-[34px] lg:tracking-[-0.03em]">Hola, Ana</h1>
+      <h1 className="text-[28px] lg:text-[34px] lg:tracking-[-0.03em]">
+        Hola, <ShellFirstName />
+      </h1>
       <p className="mt-0.5 text-[15px] text-muted-foreground lg:mt-1">
         <span className="lg:hidden">Tu historia clínica, bajo tu control.</span>
         <span className="hidden lg:inline">Tenés una solicitud para revisar y un permiso abierto.</span>
