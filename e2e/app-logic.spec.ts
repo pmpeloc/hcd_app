@@ -12,7 +12,8 @@ import {
 } from '../components/access/access-source';
 import { lookupPatient } from '../components/doctor-scanner/patient-lookup';
 import { checkFile, formatBytes, MAX_FILE_BYTES, uploadRecord, type UploadPhase } from '../components/doctor-upload/upload-record';
-import { runTx, TxError, txErrorMessage, type TxDeps, type TxPhase, type TxRequest } from '../components/onchain/tx-flow';
+import { createApiClient } from '../components/onchain/api-client';
+import { runTx, toTxError, TxError, txErrorMessage, type TxDeps, type TxPhase, type TxRequest } from '../components/onchain/tx-flow';
 import { formatStudyDate, originLabel } from '../components/patient-studies/studies-source';
 import {
   createQrSession,
@@ -213,6 +214,89 @@ test.describe('on-chain transactions', () => {
     expect(txErrorMessage(new Error('API 403: forbidden'))).toBe('Tu cuenta no puede hacer esto.');
     expect(txErrorMessage(new TxError('cancelled'))).toContain('No se firmó');
     expect(txErrorMessage(new Error('Failed to fetch'))).toBe('No pudimos registrarlo. Probá de nuevo.');
+  });
+});
+
+test.describe('API client', () => {
+  type Seen = { url: string; auth: string | null; method?: string; body?: unknown };
+
+  async function withFetch(response: () => Response, run: (seen: Seen[]) => Promise<void>) {
+    const seen: Seen[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      seen.push({ url: String(url), auth: new Headers(init?.headers).get('Authorization'), method: init?.method, body: init?.body });
+      return response();
+    };
+    try {
+      await run(seen);
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+
+  test('sends the session token as a Bearer header, read fresh on every call', async () => {
+    let n = 0;
+    const api = createApiClient(async () => `token-${++n}`);
+    await withFetch(
+      () => new Response('{"ok":true}', { status: 200 }),
+      async (seen) => {
+        await expect(api.post('/tx/build', { instruction: 'x' })).resolves.toEqual({ ok: true });
+        await api.get('/access-requests/mine');
+        expect(seen[0]).toMatchObject({ auth: 'Bearer token-1', method: 'POST', body: '{"instruction":"x"}' });
+        expect(seen[0].url.endsWith('/tx/build')).toBe(true);
+        expect(seen[1]).toMatchObject({ auth: 'Bearer token-2' });
+      },
+    );
+  });
+
+  test('turns a 401 into "session expired" for the user', async () => {
+    const api = createApiClient(async () => 'stale');
+    await withFetch(
+      () => new Response('Unauthorized', { status: 401 }),
+      async () => {
+        const err = await api.post('/tx/build', {}).catch((e: unknown) => e);
+        expect(toTxError(err).reason).toBe('session');
+        expect(txErrorMessage(err)).toBe('Tu sesión venció. Volvé a iniciar sesión.');
+      },
+    );
+  });
+});
+
+test.describe('program errors', () => {
+  const programError = (code: string) =>
+    new Error(`API 422: ${JSON.stringify({ statusCode: 422, code, message: 'from the IDL' })}`);
+
+  test('explain the three new program errors', () => {
+    expect(txErrorMessage(programError('IssuerIsPatient'))).toBe('No podés cargarte un estudio a vos mismo. Escaneá el QR del paciente.');
+    expect(txErrorMessage(programError('InvalidContentHash'))).toBe('La huella del archivo no es válida. Volvé a cargarlo.');
+    expect(txErrorMessage(programError('KeyServiceIsAdmin'))).toContain('Avisale al equipo de Salua');
+  });
+
+  test('explain the errors a patient or doctor can actually hit', () => {
+    expect(txErrorMessage(programError('ProviderNotVerified'))).toContain('matrícula todavía no está verificada');
+    expect(txErrorMessage(programError('RecordDisputed'))).toContain('en disputa');
+    expect(txErrorMessage(programError('GrantExpired'))).toBe('Ese permiso ya venció.');
+    expect(toTxError(programError('NotADoctor'))).toMatchObject({ reason: 'program', programError: 'NotADoctor' });
+  });
+
+  test('fall back to a generic message for unknown or non-JSON failures', () => {
+    expect(toTxError(programError('error_6099')).reason).toBe('failed');
+    expect(toTxError(new Error('API 422: transaction failed: blockhash not found')).reason).toBe('failed');
+    expect(txErrorMessage(programError('error_6099'))).toBe('No pudimos registrarlo. Probá de nuevo.');
+  });
+
+  test('are not retried by runTx', async () => {
+    let builds = 0;
+    const post: TxDeps['post'] = async <T,>(path: string) => {
+      if (path === '/tx/build') {
+        builds++;
+        return { tx_id: '6f1c2a40-0000-4000-8000-000000000001', tx_base64: 'eA==', message_hash: 'ab', expires_in_slots: 150 } as T;
+      }
+      throw programError('IssuerIsPatient');
+    };
+    const request: TxRequest = { instruction: 'void_record', signer: 'Doctor111', args: { record: 'Rec111' } };
+    await expect(runTx(request, { post, sign: async (tx) => tx })).rejects.toMatchObject({ reason: 'program', programError: 'IssuerIsPatient' });
+    expect(builds).toBe(1);
   });
 });
 
