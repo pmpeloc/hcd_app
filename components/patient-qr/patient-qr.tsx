@@ -8,9 +8,12 @@ import { ProgressTrack } from '@/components/progress-track';
 import { StatusChip } from '@/components/status-chip';
 import { Tile, TileCross } from '@/components/tile';
 import { Button } from '@/components/ui/button';
+import { useShellIdentity } from '@/components/app-shell/session-shell';
+import { useSaluaWallet } from '@/lib/auth-providers';
 import { cn } from '@/lib/utils';
 import { QrCode } from './qr-code';
 import {
+  DEMO_ACCOUNT,
   QR_TTL_SECONDS,
   createQrSession,
   encodeQrPayload,
@@ -24,7 +27,11 @@ const LOW_SECONDS = 30;
 
 type Phase = 'loading' | 'ready' | 'error';
 
-export function PatientQr({ patientName }: { patientName: string }) {
+export function PatientQr() {
+  const { name: patientName, demo } = useShellIdentity();
+  const wallet = useSaluaWallet();
+  const account = demo ? DEMO_ACCOUNT : wallet.address;
+  const walletFailed = !demo && !account && Boolean(wallet.error);
   const [session, setSession] = useState<QrSession | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
   const [left, setLeft] = useState(QR_TTL_SECONDS);
@@ -33,10 +40,11 @@ export function PatientQr({ patientName }: { patientName: string }) {
   const requestId = useRef(0);
 
   const issue = useCallback(async () => {
+    if (!account) return;
     const id = ++requestId.current;
     setPhase('loading');
     try {
-      const next = await createQrSession();
+      const next = await createQrSession(account);
       if (id !== requestId.current) return;
       setSession(next);
       setLeft(secondsUntil(next.expiresAt));
@@ -47,10 +55,10 @@ export function PatientQr({ patientName }: { patientName: string }) {
       setPhase('error');
       setAnnouncement('No pudimos generar el código.');
     }
-  }, []);
+  }, [account]);
 
+  // Issue the first code as soon as the account is ready (Privy can take a moment).
   useEffect(() => {
-    // Initial issue on mount; state updates happen after the await.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void issue();
   }, [issue]);
@@ -75,7 +83,8 @@ export function PatientQr({ patientName }: { patientName: string }) {
     return () => window.clearTimeout(t);
   }, [copied]);
 
-  const loading = phase === 'loading';
+  const loading = phase === 'loading' && !walletFailed;
+  const failed = phase === 'error' || walletFailed;
   const expired = phase === 'ready' && left === 0;
   const low = phase === 'ready' && left > 0 && left <= LOW_SECONDS;
   const usable = phase === 'ready' && !expired;
@@ -90,7 +99,9 @@ export function PatientQr({ patientName }: { patientName: string }) {
     }
   };
 
-  const note = expired
+  const note = !account
+    ? 'Preparando tu cuenta…'
+    : expired
     ? 'Generá uno nuevo para tu consulta.'
     : low
       ? 'Quedan pocos segundos.'
@@ -118,7 +129,7 @@ export function PatientQr({ patientName }: { patientName: string }) {
               className={cn(
                 'size-full transition-[filter,opacity] duration-300 ease-out-soft',
                 (expired || loading) && 'opacity-35 blur-[5px]',
-                phase === 'error' && 'opacity-20 blur-[5px]',
+                failed && 'opacity-20 blur-[5px]',
               )}
             >
               {session ? (
@@ -172,11 +183,13 @@ export function PatientQr({ patientName }: { patientName: string }) {
       </Tile>
 
       <Tile tone="sky" className="lg:col-span-6 lg:flex lg:flex-col bento:col-span-7">
-        {phase === 'error' ? (
+        {failed ? (
           <div className="flex flex-col items-start gap-3 lg:my-auto">
-            <h2 className="font-sans text-sm font-semibold tracking-normal lg:text-[15px]">No pudimos generar el código</h2>
+            <h2 className="font-sans text-sm font-semibold tracking-normal lg:text-[15px]">
+              {walletFailed ? 'No pudimos preparar tu cuenta' : 'No pudimos generar el código'}
+            </h2>
             <p className="text-[13px] text-salua-sky-ink">Revisá tu conexión y probá de nuevo.</p>
-            <Button onClick={issue}>
+            <Button onClick={walletFailed ? wallet.retry : issue}>
               <RefreshCw aria-hidden="true" />
               Reintentar
             </Button>

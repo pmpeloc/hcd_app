@@ -62,9 +62,6 @@ export function DoctorScanner() {
   const timedOut = Boolean(found) && left === 0;
   const shown: LookupResult | null = found && timedOut ? { status: 'expired', code: found.code } : result;
 
-  useEffect(() => {
-    if (timedOut) setAnnouncement('El código venció. Pedile al paciente uno nuevo.');
-  }, [timedOut]);
 
   const check = async (input: CodeInput) => {
     const id = ++requestId.current;
@@ -123,7 +120,7 @@ export function DoctorScanner() {
   return (
     <div className="mt-4 grid grid-cols-1 gap-2.5 lg:mt-[22px] lg:grid-cols-12 lg:gap-4">
       <p aria-live="polite" className="sr-only">
-        {announcement}
+        {timedOut ? 'El código venció. Pedile al paciente uno nuevo.' : announcement}
       </p>
 
       <Tile tone="navy" className="flex flex-col p-0 lg:col-span-7 lg:row-span-2 lg:p-0">

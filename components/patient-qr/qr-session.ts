@@ -12,8 +12,8 @@ export type QrSession = {
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const PAYLOAD_PREFIX = 'salua://qr';
 
-// Synthetic devnet-style address until Matias' Privy integration provides the real one.
-const PLACEHOLDER_ACCOUNT = '7Hq3fN2xQeLzR8vWbK5mYtC9pDsJ4aGuE6hVnXo1kP2x';
+/** Synthetic devnet-style address, used only in demo mode (auth not configured). */
+export const DEMO_ACCOUNT = '7Hq3fN2xQeLzR8vWbK5mYtC9pDsJ4aGuE6hVnXo1kP2x';
 
 function randomCode(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(4));
@@ -21,14 +21,15 @@ function randomCode(): string {
 }
 
 /**
- * Issues a new one-time code for the signed-in patient.
- * Placeholder: swap for the API call once `lib/api.ts` exposes it.
+ * Issues a new one-time code for the patient's account (their Privy wallet).
+ * The code is generated in the browser for now; once the API exposes it, the
+ * backend should issue and remember it so the doctor's scanner can validate it.
  */
-export async function createQrSession(): Promise<QrSession> {
+export async function createQrSession(account: string): Promise<QrSession> {
   await new Promise((resolve) => setTimeout(resolve, 350));
   return {
     code: randomCode(),
-    account: PLACEHOLDER_ACCOUNT,
+    account,
     expiresAt: Date.now() + QR_TTL_SECONDS * 1000,
   };
 }

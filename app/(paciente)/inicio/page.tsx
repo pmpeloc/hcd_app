@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Activity, ChevronRight, FileText, Image as ImageIcon, QrCode, type LucideIcon } from 'lucide-react';
+import { ShellFirstName } from '@/components/app-shell/session-shell';
 import { BigNumber } from '@/components/big-number';
 import { IconWell } from '@/components/icon-well';
 import { ProgressTrack } from '@/components/progress-track';
@@ -10,7 +11,6 @@ import { cn } from '@/lib/utils';
 
 const PENDING_REQUEST = {
   doctor: 'Dra. Lucía Ríos',
-  study: 'Ecocardiograma',
   detail: 'Cardióloga · MN 112.345 · Clínica del Sol',
 };
 
@@ -39,7 +39,9 @@ const ACCESS_LOG = [
 export default function PatientHomePage() {
   return (
     <>
-      <h1 className="text-[28px] lg:text-[34px] lg:tracking-[-0.03em]">Hola, Ana</h1>
+      <h1 className="text-[28px] lg:text-[34px] lg:tracking-[-0.03em]">
+        Hola, <ShellFirstName />
+      </h1>
       <p className="mt-0.5 text-[15px] text-muted-foreground lg:mt-1">
         <span className="lg:hidden">Tu historia clínica, bajo tu control.</span>
         <span className="hidden lg:inline">Tenés una solicitud para revisar y un permiso abierto.</span>
@@ -50,7 +52,7 @@ export default function PatientHomePage() {
           <TileDots />
           <StatusChip status="pending" label="Solicitud pendiente" className="relative self-start" />
           <h2 className="relative mt-2.5 text-lg leading-[1.3] tracking-[-0.01em] text-white lg:mt-3.5 lg:text-2xl lg:leading-[1.2]">
-            La {PENDING_REQUEST.doctor} quiere ver tu {PENDING_REQUEST.study}
+            La {PENDING_REQUEST.doctor} quiere ver tu historia
           </h2>
           <p className="relative mt-1 text-[13px] text-salua-navy-ink lg:mt-1.5 lg:text-sm">
             {PENDING_REQUEST.detail} · verificada
