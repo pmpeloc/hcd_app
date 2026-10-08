@@ -1,7 +1,18 @@
 import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import {
+  effectiveStatus,
+  expiryFor,
+  formatAgo,
+  formatCloses,
+  formatRemaining,
+  grantProgress,
+  requestAccess,
+  type Grant,
+} from '../components/access/access-source';
 import { lookupPatient } from '../components/doctor-scanner/patient-lookup';
 import { checkFile, formatBytes, MAX_FILE_BYTES, uploadRecord, type UploadPhase } from '../components/doctor-upload/upload-record';
+import { runTx, TxError, txErrorMessage, type TxDeps, type TxPhase, type TxRequest } from '../components/onchain/tx-flow';
 import { formatStudyDate, originLabel } from '../components/patient-studies/studies-source';
 import {
   createQrSession,
@@ -142,5 +153,116 @@ test.describe('patient studies', () => {
   test('formats study dates', () => {
     expect(formatStudyDate('2026-09-03')).toBe('03/09/2026');
     expect(formatStudyDate('2026-09-03', 'short')).toBe('03/09');
+  });
+});
+
+test.describe('on-chain transactions', () => {
+  const request: TxRequest = { instruction: 'dispute_record', signer: 'PatientWallet111', args: { record: 'RecordPda111' } };
+  const built = { tx_id: '6f1c2a40-0000-4000-8000-000000000001', tx_base64: 'dW5zaWduZWQ=', message_hash: 'ab', expires_in_slots: 150 };
+  const sent = { signature: '5sig', explorer_url: 'https://explorer.solana.com/tx/5sig?cluster=devnet' };
+
+  /** A fake API: each call to a path shifts the next scripted response (or error) for it. */
+  function fakeApi(script: Record<string, (object | Error)[]>) {
+    const calls: { path: string; body: unknown }[] = [];
+    const post: TxDeps['post'] = async <T,>(path: string, body: unknown) => {
+      calls.push({ path, body });
+      const next = script[path].shift();
+      if (next instanceof Error) throw next;
+      return next as T;
+    };
+    return { post, calls };
+  }
+
+  test('builds, signs with the wallet and submits, reporting each phase', async () => {
+    const api = fakeApi({ '/tx/build': [built], '/tx/submit': [sent] });
+    const phases: TxPhase[] = [];
+    const result = await runTx(request, { post: api.post, sign: async (tx) => `signed:${tx}` }, (p) => phases.push(p));
+
+    expect(result).toEqual({ signature: '5sig', explorerUrl: sent.explorer_url });
+    expect(phases).toEqual(['building', 'signing', 'sending']);
+    expect(api.calls).toEqual([
+      { path: '/tx/build', body: request },
+      { path: '/tx/submit', body: { tx_id: built.tx_id, signed_tx_base64: 'signed:dW5zaWduZWQ=' } },
+    ]);
+  });
+
+  test('rebuilds once when the blockhash expired while signing', async () => {
+    const api = fakeApi({ '/tx/build': [built, built], '/tx/submit': [new Error('API 409: blockhash expired'), sent] });
+    await expect(runTx(request, { post: api.post, sign: async (tx) => tx })).resolves.toMatchObject({ signature: '5sig' });
+    expect(api.calls.map((c) => c.path)).toEqual(['/tx/build', '/tx/submit', '/tx/build', '/tx/submit']);
+  });
+
+  test('gives up after a second expiry', async () => {
+    const expired = () => new Error('API 409: blockhash expired');
+    const api = fakeApi({ '/tx/build': [built, built], '/tx/submit': [expired(), expired()] });
+    await expect(runTx(request, { post: api.post, sign: async (tx) => tx })).rejects.toMatchObject({ reason: 'expired' });
+  });
+
+  test('treats a rejected wallet prompt as cancelled and never submits', async () => {
+    const api = fakeApi({ '/tx/build': [built], '/tx/submit': [sent] });
+    const sign = async () => {
+      throw new Error('User rejected the request');
+    };
+    await expect(runTx(request, { post: api.post, sign })).rejects.toMatchObject({ reason: 'cancelled' });
+    expect(api.calls.map((c) => c.path)).toEqual(['/tx/build']);
+  });
+
+  test('maps API errors to messages the user can act on', async () => {
+    expect(txErrorMessage(new Error('API 429: budget exhausted'))).toContain('muchas operaciones');
+    expect(txErrorMessage(new Error('API 503: rpc down'))).toContain('Solana no responde');
+    expect(txErrorMessage(new Error('API 403: forbidden'))).toBe('Tu cuenta no puede hacer esto.');
+    expect(txErrorMessage(new TxError('cancelled'))).toContain('No se firmó');
+    expect(txErrorMessage(new Error('Failed to fetch'))).toBe('No pudimos registrarlo. Probá de nuevo.');
+  });
+});
+
+test.describe('access grants', () => {
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+
+  test('shows the time left in the unit read at a glance', () => {
+    expect(formatRemaining(24 * HOUR - 2000)).toEqual({ value: 24, unit: 'h' });
+    expect(formatRemaining(21 * HOUR)).toEqual({ value: 21, unit: 'h' });
+    expect(formatRemaining(45 * MIN)).toEqual({ value: 45, unit: 'min' });
+    expect(formatRemaining(59.9 * MIN)).toEqual({ value: 1, unit: 'h' });
+    expect(formatRemaining(10_000)).toEqual({ value: 1, unit: 'min' });
+    expect(formatRemaining(7 * DAY - MIN)).toEqual({ value: 7, unit: 'días' });
+    expect(formatRemaining(-5)).toEqual({ value: 0, unit: 'min' });
+  });
+
+  test('says when a grant closes in local time', () => {
+    const now = new Date(2026, 9, 8, 14, 13).getTime();
+    expect(formatCloses(new Date(2026, 9, 8, 15, 13).getTime(), now)).toBe('hoy a las 15:13');
+    expect(formatCloses(expiryFor('24h', now), now)).toBe('mañana a las 14:13');
+    expect(formatCloses(expiryFor('7d', now), now)).toBe('el 15/10 a las 14:13');
+  });
+
+  test('turns the chosen duration into an expiry', () => {
+    expect(expiryFor('1h', 0)).toBe(HOUR);
+    expect(expiryFor('24h', 0)).toBe(DAY);
+    expect(expiryFor('7d', 0)).toBe(7 * DAY);
+  });
+
+  test('tracks how much of the grant is left and when it lapses', () => {
+    const grant = { grantedAt: 0, expiresAt: 24 * HOUR } as Grant;
+    expect(grantProgress(grant, 3 * HOUR)).toBeCloseTo(0.875);
+    expect(grantProgress(grant, 30 * HOUR)).toBe(0);
+    expect(effectiveStatus({ ...grant, status: 'active' }, 23 * HOUR)).toBe('active');
+    expect(effectiveStatus({ ...grant, status: 'active' }, 24 * HOUR)).toBe('expired');
+    expect(effectiveStatus({ ...grant, status: 'revoked' }, HOUR)).toBe('revoked');
+  });
+
+  test('says how long ago a request arrived', () => {
+    expect(formatAgo(0, 30_000)).toBe('Recién');
+    expect(formatAgo(0, 12 * MIN)).toBe('Hace 12 min');
+    expect(formatAgo(0, 3 * HOUR)).toBe('Hace 3 h');
+    expect(formatAgo(0, DAY + HOUR)).toBe('Ayer');
+    expect(formatAgo(0, 4 * DAY)).toBe('Hace 4 días');
+  });
+
+  test('fails the request for the demo error code', async () => {
+    await expect(requestAccess({ patientCode: 'SAL-EEEE', reason: '' })).rejects.toThrow('request-failed');
+    await expect(requestAccess({ patientCode: 'SAL-4F7K', reason: 'control' })).resolves.toEqual({ id: 'req-sal-4f7k' });
   });
 });
