@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Activity, FileText, FlaskConical, Image as ImageIcon, QrCode, RefreshCw, type LucideIcon } from 'lucide-react';
-import { AlertDialog } from 'radix-ui';
 import { BigNumber } from '@/components/big-number';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { IconWell } from '@/components/icon-well';
 import { StatusChip } from '@/components/status-chip';
 import { Tile, TileCross } from '@/components/tile';
@@ -243,49 +243,24 @@ export function StudiesList() {
         </p>
       </Tile>
 
-      <AlertDialog.Root open={disputing !== null} onOpenChange={(open) => !open && !busy && setDisputing(null)}>
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-salua-navy/40 backdrop-blur-[2px] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-          <AlertDialog.Content className="fixed top-1/2 left-1/2 z-50 w-[calc(100%-32px)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-border bg-card p-6 shadow-tile duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95">
-            <AlertDialog.Title className="font-heading text-xl font-semibold tracking-[-0.02em] text-salua-navy">
-              ¿Este estudio no es tuyo?
-            </AlertDialog.Title>
-            <AlertDialog.Description asChild>
-              <div className="mt-2 text-sm leading-normal text-muted-foreground">
-                {disputing && (
-                  <p className="rounded-xl bg-background px-3.5 py-2.5">
-                    <span className="block font-semibold text-salua-navy">{disputing.name}</span>
-                    {formatStudyDate(disputing.date)} · {originLabel(disputing.origin)}
-                  </p>
-                )}
-                <p className="mt-3">Va a quedar «En disputa» y quien lo emitió lo revisa para anularlo.</p>
-              </div>
-            </AlertDialog.Description>
-            {dialogError && (
-              <p role="alert" className="mt-3 text-sm text-salua-error-ink">
-                {dialogError}
-              </p>
-            )}
-            <div className="mt-5 flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
-              <AlertDialog.Cancel asChild>
-                <Button variant="outline" disabled={busy}>
-                  Cancelar
-                </Button>
-              </AlertDialog.Cancel>
-              <Button
-                variant="destructive"
-                disabled={busy}
-                onClick={(e) => {
-                  e.preventDefault();
-                  void confirmDispute();
-                }}
-              >
-                {busy ? 'Registrando…' : 'Sí, no es mío'}
-              </Button>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
+      <ConfirmDialog
+        open={disputing !== null}
+        onCancel={() => setDisputing(null)}
+        onConfirm={() => void confirmDispute()}
+        title="¿Este estudio no es tuyo?"
+        confirmLabel="Sí, no es mío"
+        busyLabel="Registrando…"
+        busy={busy}
+        error={dialogError}
+      >
+        {disputing && (
+          <p className="rounded-xl bg-background px-3.5 py-2.5">
+            <span className="block font-semibold text-salua-navy">{disputing.name}</span>
+            {formatStudyDate(disputing.date)} · {originLabel(disputing.origin)}
+          </p>
+        )}
+        <p className="mt-3">Va a quedar «En disputa» y quien lo emitió lo revisa para anularlo.</p>
+      </ConfirmDialog>
     </div>
   );
 }

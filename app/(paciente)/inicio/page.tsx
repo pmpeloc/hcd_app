@@ -11,7 +11,6 @@ import { cn } from '@/lib/utils';
 
 const PENDING_REQUEST = {
   doctor: 'Dra. Lucía Ríos',
-  study: 'Ecocardiograma',
   detail: 'Cardióloga · MN 112.345 · Clínica del Sol',
 };
 
@@ -53,7 +52,7 @@ export default function PatientHomePage() {
           <TileDots />
           <StatusChip status="pending" label="Solicitud pendiente" className="relative self-start" />
           <h2 className="relative mt-2.5 text-lg leading-[1.3] tracking-[-0.01em] text-white lg:mt-3.5 lg:text-2xl lg:leading-[1.2]">
-            La {PENDING_REQUEST.doctor} quiere ver tu {PENDING_REQUEST.study}
+            La {PENDING_REQUEST.doctor} quiere ver tu historia
           </h2>
           <p className="relative mt-1 text-[13px] text-salua-navy-ink lg:mt-1.5 lg:text-sm">
             {PENDING_REQUEST.detail} · verificada
