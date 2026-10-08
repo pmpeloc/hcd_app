@@ -1,3 +1,4 @@
+import { sealFile } from '@/components/viewer/sealed-file';
 import { encryptFile, generateDek, sha256Hex } from '@/lib/crypto';
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -40,7 +41,8 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Encrypts the study in the browser and hands it to the backend.
- * Encryption is real (lib/crypto, AES-256-GCM + SHA-256 of the ciphertext).
+ * Encryption is real (lib/crypto, AES-256-GCM). What gets stored is the sealed file,
+ * `iv || ciphertext` (components/viewer/sealed-file.ts), and `contentHash` is its SHA-256.
  * Upload, key deposit and the `issue_record` signature are placeholders until
  * `lib/api.ts` exposes upload-url / records and Privy can sign.
  */
@@ -51,11 +53,12 @@ export async function uploadRecord(
   onProgress('encrypting', 5);
   const plaintext = await input.file.arrayBuffer();
   const dek = await generateDek();
-  const { ciphertext } = await encryptFile(dek, plaintext);
-  const contentHash = await sha256Hex(ciphertext);
+  const { iv, ciphertext } = await encryptFile(dek, plaintext);
+  const sealed = sealFile(iv, ciphertext);
+  const contentHash = await sha256Hex(sealed.buffer);
   onProgress('encrypting', 25);
 
-  // Placeholder upload of the ciphertext to the signed URL.
+  // Placeholder upload of the sealed file to the signed URL.
   for (const percent of [32, 41, 50, 60]) {
     await wait(320);
     onProgress('uploading', percent);
