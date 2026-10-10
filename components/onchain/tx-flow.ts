@@ -8,6 +8,12 @@ import { apiCode, apiStatus } from '@/lib/api-client';
 
 /** The user-signed instructions the app sends. `signer` is the user's own wallet. */
 export type TxRequest =
+  | { instruction: 'register_patient'; signer: string; args: Record<string, never> }
+  | {
+      instruction: 'register_provider';
+      signer: string;
+      args: { provider_type: 'doctor' | 'clinic'; organization: string };
+    }
   | {
       instruction: 'issue_record';
       signer: string;
