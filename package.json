@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:api": "playwright test --config playwright.api.config.ts"
   },
   "dependencies": {
     "@privy-io/react-auth": "3.47.0",

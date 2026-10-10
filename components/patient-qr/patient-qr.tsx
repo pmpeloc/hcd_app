@@ -10,6 +10,8 @@ import { Tile, TileCross } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 import { useShellIdentity } from '@/components/app-shell/session-shell';
 import { useSaluaWallet } from '@/lib/auth-providers';
+import { createApiClient } from '@/lib/api-client';
+import { DEMO_DATA } from '@/lib/demo';
 import { cn } from '@/lib/utils';
 import { QrCode } from './qr-code';
 import {
@@ -29,8 +31,12 @@ type Phase = 'loading' | 'ready' | 'error';
 
 export function PatientQr() {
   const { name: patientName, demo } = useShellIdentity();
+  const offline = demo || DEMO_DATA;
   const wallet = useSaluaWallet();
-  const account = demo ? DEMO_ACCOUNT : wallet.address;
+  // record-code needs the wallet enrolled, not just created. The demo
+  // account only stands in for a demo identity: a signed-in session still
+  // needs its own wallet even while the data layer is stubbed (e2e).
+  const account = demo ? DEMO_ACCOUNT : wallet.enrolled ? wallet.address : undefined;
   const walletFailed = !demo && !account && Boolean(wallet.error);
   const [session, setSession] = useState<QrSession | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
@@ -44,7 +50,7 @@ export function PatientQr() {
     const id = ++requestId.current;
     setPhase('loading');
     try {
-      const next = await createQrSession(account);
+      const next = await createQrSession(account, offline ? undefined : createApiClient());
       if (id !== requestId.current) return;
       setSession(next);
       setLeft(secondsUntil(next.expiresAt));
@@ -55,7 +61,7 @@ export function PatientQr() {
       setPhase('error');
       setAnnouncement('No pudimos generar el código.');
     }
-  }, [account]);
+  }, [account, offline]);
 
   // Issue the first code as soon as the account is ready (Privy can take a moment).
   useEffect(() => {

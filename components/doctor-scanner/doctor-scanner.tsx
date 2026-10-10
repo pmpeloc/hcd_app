@@ -13,6 +13,9 @@ import { StatusChip } from '@/components/status-chip';
 import { Tile } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useShellIdentity } from '@/components/app-shell/session-shell';
+import { createApiClient } from '@/lib/api-client';
+import { DEMO_DATA } from '@/lib/demo';
 import { CameraView } from './camera-view';
 import { lookupPatient, type CodeInput, type LookupResult } from './patient-lookup';
 
@@ -34,6 +37,7 @@ const PROBLEMS = {
 } as const;
 
 export function DoctorScanner() {
+  const { demo } = useShellIdentity();
   const [result, setResult] = useState<LookupResult | null>(null);
   const [looking, setLooking] = useState(false);
   const [dniVerified, setDniVerified] = useState(false);
@@ -69,7 +73,7 @@ export function DoctorScanner() {
     setDniVerified(false);
     setResult(null);
     setAnnouncement('Buscando al paciente…');
-    const next = await lookupPatient(input);
+    const next = await lookupPatient(input, demo || DEMO_DATA ? undefined : createApiClient());
     if (id !== requestId.current) return;
     setLooking(false);
     setResult(next);

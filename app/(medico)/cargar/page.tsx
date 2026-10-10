@@ -2,9 +2,6 @@ import { normalizeCode } from '@/components/patient-qr/qr-session';
 import { UploadFlow } from '@/components/doctor-upload/upload-flow';
 import { NeedsPatient } from '@/components/needs-patient';
 
-// Placeholder until the scanner hands over a real patient from the API.
-const PLACEHOLDER_PATIENT_NAME = 'Ana Martínez';
-
 export default async function UploadPage({ searchParams }: { searchParams: Promise<{ paciente?: string }> }) {
   const { paciente } = await searchParams;
   const code = paciente ? normalizeCode(paciente) : null;
@@ -17,7 +14,7 @@ export default async function UploadPage({ searchParams }: { searchParams: Promi
       </p>
 
       {code ? (
-        <UploadFlow patient={{ name: PLACEHOLDER_PATIENT_NAME, code }} />
+        <UploadFlow code={code} />
       ) : (
         <NeedsPatient then="cargar el estudio" />
       )}

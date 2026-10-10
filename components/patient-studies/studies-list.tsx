@@ -10,6 +10,10 @@ import { StatusChip } from '@/components/status-chip';
 import { Tile, TileCross } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useShellIdentity } from '@/components/app-shell/session-shell';
+import { useSaluaWallet } from '@/lib/auth-providers';
+import { createApiClient } from '@/lib/api-client';
+import { DEMO_DATA } from '@/lib/demo';
 import {
   disputeStudy,
   formatStudyDate,
@@ -52,6 +56,9 @@ const EMPTY_FILTER: Record<Exclude<Filter, 'all'>, string> = {
 type LoadState = { phase: 'loading' } | { phase: 'error' } | { phase: 'ready'; studies: Study[] };
 
 export function StudiesList() {
+  const { demo } = useShellIdentity();
+  const offline = demo || DEMO_DATA;
+  const wallet = useSaluaWallet();
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [filter, setFilter] = useState<Filter>('all');
   const [disputing, setDisputing] = useState<Study | null>(null);
@@ -62,11 +69,11 @@ export function StudiesList() {
   const load = useCallback(async () => {
     setState({ phase: 'loading' });
     try {
-      setState({ phase: 'ready', studies: await getMyStudies() });
+      setState({ phase: 'ready', studies: await getMyStudies(offline ? undefined : createApiClient()) });
     } catch {
       setState({ phase: 'error' });
     }
-  }, []);
+  }, [offline]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -82,7 +89,17 @@ export function StudiesList() {
     setBusy(true);
     setDialogError('');
     try {
-      await disputeStudy(disputing.id);
+      await disputeStudy(
+        disputing.id,
+        offline
+          ? undefined
+          : {
+              post: createApiClient().post,
+              sign: wallet.signTx,
+              recordPda: disputing.recordPda,
+              signer: wallet.address,
+            },
+      );
       setState((prev) =>
         prev.phase === 'ready'
           ? {
@@ -202,8 +219,11 @@ export function StudiesList() {
                     )}
                   </div>
                   <div className="col-start-2 flex items-center gap-2 sm:col-start-3 sm:justify-end">
-                    <StatusChip status={STATUS_CHIP[study.status]} />
-                    {study.status === 'active' && (
+                    <StatusChip
+                      status={study.pending ? 'pending' : STATUS_CHIP[study.status]}
+                      label={study.pending ? 'Registrando…' : undefined}
+                    />
+                    {study.status === 'active' && !study.pending && (
                       <Button
                         variant="ghost"
                         size="sm"
