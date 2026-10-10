@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { AuthProviders, useSaluaWallet } from '@/lib/auth-providers';
 import { useSession } from '@/lib/session-provider';
 import { getSupabaseClient } from '@/lib/supabase';
@@ -8,10 +9,18 @@ import { getSupabaseClient } from '@/lib/supabase';
 function LoginContent() {
   const { session, loading, error: sessionError } = useSession();
   const wallet = useSaluaWallet();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  // Once the wallet is enrolled the setup is complete: send the user to the
+  // home that matches their application role.
+  useEffect(() => {
+    if (session && wallet.enrolled) {
+      router.replace(wallet.role === 'doctor' ? '/panel' : '/inicio');
+    }
+  }, [session, wallet.enrolled, wallet.role, router]);
   async function emailLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(''); setMessage('');
     try {
