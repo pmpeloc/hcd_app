@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { PrivyProvider, usePrivy, useSyncJwtBasedAuthState } from '@privy-io/react-auth';
 import { useCreateWallet, useSignMessage, useSignTransaction, useWallets } from '@privy-io/react-auth/solana';
 import { createSolanaRpc, createSolanaRpcSubscriptions, getProgramDerivedAddress, getAddressEncoder, address as solanaAddress } from '@solana/kit';
@@ -9,6 +9,7 @@ import { getSupabaseClient } from './supabase';
 import { embeddedSolanaAddress, matchesSession, PRIVY_APP_ID } from './privy';
 import { enrollWallet } from './enrollment';
 import { createApiClient, sessionToken, SessionError } from './api-client';
+import { patientRegistration, type RegistrationPhase } from './patient-registration';
 
 const SOLANA_CHAIN = 'solana:devnet' as const;
 const SOLANA_RPC_URL =
@@ -18,13 +19,13 @@ const PROGRAM_ID = process.env.NEXT_PUBLIC_PROGRAM_ID;
 
 /** True when the wallet's PatientProfile PDA already exists on-chain. */
 async function patientProfileExists(wallet: string): Promise<boolean> {
-  if (!PROGRAM_ID) return false;
+  if (!PROGRAM_ID) throw new Error('Program is not configured');
   const [pda] = await getProgramDerivedAddress({
     programAddress: solanaAddress(PROGRAM_ID),
     seeds: [new TextEncoder().encode('patient'), getAddressEncoder().encode(solanaAddress(wallet))],
   });
   const info = await createSolanaRpc(SOLANA_RPC_URL)
-    .getAccountInfo(pda, { encoding: 'base64' })
+    .getAccountInfo(pda, { encoding: 'base64', commitment: 'confirmed' })
     .send();
   return info.value !== null;
 }
@@ -36,6 +37,7 @@ type WalletState = {
   /** Wallet enrollment with the API: the wallet proves possession by signing a challenge. */
   enrolled: boolean;
   enrolling: boolean;
+  registration: RegistrationPhase;
   /** Application role from the enrolled profile (patient/doctor/...). */
   role?: string;
   /** Signs a base64 transaction with the enrolled wallet; throws when none is ready. */
@@ -47,6 +49,7 @@ const WalletContext = createContext<WalletState>({
   busy: false,
   enrolled: false,
   enrolling: false,
+  registration: 'idle',
   signTx: () => Promise.reject(new Error('no wallet')),
   retry: () => {},
   logout: async () => {},
@@ -147,43 +150,50 @@ function WalletBridge({ children }: { children: ReactNode }) {
     return btoa(out);
   }, [wallets, address, signTransaction]);
 
-  // Once the wallet is bound, anchor the on-chain PatientProfile: the user
-  // signs `register_patient` while the fee payer covers rent. Every enrolled
-  // wallet gets one — a doctor is a patient too. The PDA is checked on-chain
-  // first so already-registered wallets are never prompted to sign again.
-  const onChainRegistered = useRef(false);
-  useEffect(() => {
-    if (!enrolled || !address || onChainRegistered.current) return;
-    onChainRegistered.current = true;
-    void (async () => {
-      try {
-        if (await patientProfileExists(address)) return;
+  // Coordinate remounts and Strict Mode through a shared, identity-scoped
+  // operation. Enrollment and confirmed on-chain registration are distinct.
+  const registrationKey = session && address
+    ? JSON.stringify([session.user.id, address, SOLANA_RPC_URL, PROGRAM_ID]) : '';
+  const registrationState = useSyncExternalStore(
+    patientRegistration.subscribe,
+    () => patientRegistration.snapshot(registrationKey),
+    patientRegistration.serverSnapshot,
+  );
+  const registerPatient = useCallback((retry = false) => {
+    if (!enrolled || !address || !registrationKey) return;
+    return patientRegistration.start(registrationKey, {
+      exists: () => patientProfileExists(address),
+      register: async () => {
         const { runTx } = await import('@/components/onchain/tx-flow');
         await runTx(
           { instruction: 'register_patient', signer: address, args: {} },
           { post: createApiClient().post, sign: signTx },
         );
-      } catch (err) {
-        console.warn('register_patient failed:', err);
-      }
-    })();
-  }, [enrolled, address, signTx]);
+      },
+    }, retry);
+  }, [enrolled, address, registrationKey, signTx]);
+  useEffect(() => {
+    void registerPatient();
+  }, [registerPatient]);
 
   const error = session && state.status === 'error'
     ? 'Could not connect your wallet session. Sign out and try again.'
     : session && state.status === 'not-enabled'
       ? 'Wallet sign-in is not enabled. Contact the Salua team.'
-      : (creationError ?? enrollError);
+      : (creationError ?? enrollError ?? (registrationState.phase === 'error'
+        ? 'Your patient registration was not confirmed. Retry to continue.' : undefined));
   return <WalletContext.Provider value={{
     address,
     error,
     busy: !!session && !address && !error,
     enrolled,
     enrolling,
+    registration: registrationState.phase,
     role,
     signTx,
     retry: () => {
-      if (address) void enroll(address);
+      if (enrolled && address) void registerPatient(true);
+      else if (address) void enroll(address);
       else void ensureWallet();
     },
     logout,
@@ -194,7 +204,7 @@ function WalletBridge({ children }: { children: ReactNode }) {
 
 function WalletProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
-  if (!PRIVY_APP_ID) return <WalletContext.Provider value={{ busy: false, enrolled: false, enrolling: false, signTx: () => Promise.reject(new Error('no wallet')), error: 'Wallet service is not configured.', retry: () => {}, logout: async () => {} }}>{children}</WalletContext.Provider>;
+  if (!PRIVY_APP_ID) return <WalletContext.Provider value={{ busy: false, enrolled: false, enrolling: false, registration: 'idle', signTx: () => Promise.reject(new Error('no wallet')), error: 'Wallet service is not configured.', retry: () => {}, logout: async () => {} }}>{children}</WalletContext.Provider>;
   const solanaRpc = createSolanaRpc(SOLANA_RPC_URL);
   const solanaRpcSubs = createSolanaRpcSubscriptions(SOLANA_WS_URL);
   return <PrivyProvider key={session?.user.id ?? 'signed-out'} appId={PRIVY_APP_ID}
