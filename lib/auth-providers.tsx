@@ -3,11 +3,31 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { PrivyProvider, usePrivy, useSyncJwtBasedAuthState } from '@privy-io/react-auth';
 import { useCreateWallet, useSignMessage, useSignTransaction, useWallets } from '@privy-io/react-auth/solana';
+import { createSolanaRpc, createSolanaRpcSubscriptions, getProgramDerivedAddress, getAddressEncoder, address as solanaAddress } from '@solana/kit';
 import { SessionProvider, useSession } from './session-provider';
 import { getSupabaseClient } from './supabase';
 import { embeddedSolanaAddress, matchesSession, PRIVY_APP_ID } from './privy';
 import { enrollWallet } from './enrollment';
-import { sessionToken, SessionError } from './api-client';
+import { createApiClient, sessionToken, SessionError } from './api-client';
+
+const SOLANA_CHAIN = 'solana:devnet' as const;
+const SOLANA_RPC_URL =
+  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com';
+const SOLANA_WS_URL = SOLANA_RPC_URL.replace(/^http/, 'ws');
+const PROGRAM_ID = process.env.NEXT_PUBLIC_PROGRAM_ID;
+
+/** True when the wallet's PatientProfile PDA already exists on-chain. */
+async function patientProfileExists(wallet: string): Promise<boolean> {
+  if (!PROGRAM_ID) return false;
+  const [pda] = await getProgramDerivedAddress({
+    programAddress: solanaAddress(PROGRAM_ID),
+    seeds: [new TextEncoder().encode('patient'), getAddressEncoder().encode(solanaAddress(wallet))],
+  });
+  const info = await createSolanaRpc(SOLANA_RPC_URL)
+    .getAccountInfo(pda, { encoding: 'base64' })
+    .send();
+  return info.value !== null;
+}
 
 type WalletState = {
   address?: string;
@@ -16,6 +36,8 @@ type WalletState = {
   /** Wallet enrollment with the API: the wallet proves possession by signing a challenge. */
   enrolled: boolean;
   enrolling: boolean;
+  /** Application role from the enrolled profile (patient/doctor/...). */
+  role?: string;
   /** Signs a base64 transaction with the enrolled wallet; throws when none is ready. */
   signTx: (txBase64: string) => Promise<string>;
   retry: () => void;
@@ -43,6 +65,7 @@ function WalletBridge({ children }: { children: ReactNode }) {
   const [enrolled, setEnrolled] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [enrollError, setEnrollError] = useState<string>();
+  const [role, setRole] = useState<string>();
   const attempted = useRef(false);
   const inFlight = useRef(false);
   const enrollInFlight = useRef<string | undefined>(undefined);
@@ -87,12 +110,14 @@ function WalletBridge({ children }: { children: ReactNode }) {
     setEnrollError(undefined);
     try {
       const token = await sessionToken();
-      await enrollWallet(token, walletAddress, async (message) => {
+      const profile = await enrollWallet(token, walletAddress, async (message) => {
         const { signature } = await signMessage({ message, wallet });
         return signature;
       });
+      setRole(profile.role);
       setEnrolled(true);
     } catch (err) {
+      console.error('wallet enrollment failed:', err);
       setEnrollError(
         err instanceof SessionError
           ? 'Your session expired. Sign in again to link your wallet.'
@@ -116,11 +141,33 @@ function WalletBridge({ children }: { children: ReactNode }) {
     const binary = atob(txBase64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const { signedTransaction } = await signTransaction({ transaction: bytes, wallet });
+    const { signedTransaction } = await signTransaction({ transaction: bytes, wallet, chain: SOLANA_CHAIN });
     let out = '';
     for (const b of signedTransaction) out += String.fromCharCode(b);
     return btoa(out);
   }, [wallets, address, signTransaction]);
+
+  // Once the wallet is bound, anchor the on-chain PatientProfile: the user
+  // signs `register_patient` while the fee payer covers rent. Every enrolled
+  // wallet gets one — a doctor is a patient too. The PDA is checked on-chain
+  // first so already-registered wallets are never prompted to sign again.
+  const onChainRegistered = useRef(false);
+  useEffect(() => {
+    if (!enrolled || !address || onChainRegistered.current) return;
+    onChainRegistered.current = true;
+    void (async () => {
+      try {
+        if (await patientProfileExists(address)) return;
+        const { runTx } = await import('@/components/onchain/tx-flow');
+        await runTx(
+          { instruction: 'register_patient', signer: address, args: {} },
+          { post: createApiClient().post, sign: signTx },
+        );
+      } catch (err) {
+        console.warn('register_patient failed:', err);
+      }
+    })();
+  }, [enrolled, address, signTx]);
 
   const error = session && state.status === 'error'
     ? 'Could not connect your wallet session. Sign out and try again.'
@@ -133,6 +180,7 @@ function WalletBridge({ children }: { children: ReactNode }) {
     busy: !!session && !address && !error,
     enrolled,
     enrolling,
+    role,
     signTx,
     retry: () => {
       if (address) void enroll(address);
@@ -147,8 +195,19 @@ function WalletBridge({ children }: { children: ReactNode }) {
 function WalletProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
   if (!PRIVY_APP_ID) return <WalletContext.Provider value={{ busy: false, enrolled: false, enrolling: false, signTx: () => Promise.reject(new Error('no wallet')), error: 'Wallet service is not configured.', retry: () => {}, logout: async () => {} }}>{children}</WalletContext.Provider>;
+  const solanaRpc = createSolanaRpc(SOLANA_RPC_URL);
+  const solanaRpcSubs = createSolanaRpcSubscriptions(SOLANA_WS_URL);
   return <PrivyProvider key={session?.user.id ?? 'signed-out'} appId={PRIVY_APP_ID}
-    config={{ embeddedWallets: { solana: { createOnLogin: 'off' }, ethereum: { createOnLogin: 'off' } } }}>
+    config={{
+      embeddedWallets: { solana: { createOnLogin: 'off' }, ethereum: { createOnLogin: 'off' } },
+      solana: {
+        rpcs: {
+          // The embedded wallet lives on devnet; kit RPC objects are what
+          // Privy's solana signing hooks resolve by chain.
+          'solana:devnet': { rpc: solanaRpc, rpcSubscriptions: solanaRpcSubs },
+        },
+      },
+    }}>
     <WalletBridge>{children}</WalletBridge>
   </PrivyProvider>;
 }

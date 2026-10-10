@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { connection } from 'next/server';
 import { ShellFirstName } from '@/components/app-shell/session-shell';
+import { ProviderActivation } from '@/components/doctor/provider-activation';
 import { ScanLine, Upload } from 'lucide-react';
 import { BigNumber } from '@/components/big-number';
 import { ProgressTrack } from '@/components/progress-track';
@@ -81,6 +82,7 @@ export default async function DoctorHomePage() {
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-flow-row-dense lg:grid-cols-12">
+        <ProviderActivation />
         <Tile asChild tone="navy" className="flex min-h-[260px] flex-col lg:col-span-6 bento:col-span-5">
           <Link href="/escanear">
             <TileDots />
