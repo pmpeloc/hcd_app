@@ -14,6 +14,7 @@ import { lookupPatient } from '../components/doctor-scanner/patient-lookup';
 import { checkFile, formatBytes, MAX_FILE_BYTES, uploadRecord, type UploadPhase } from '../components/doctor-upload/upload-record';
 import { createApiClient } from '../lib/api-client';
 import { runTx, toTxError, TxError, txErrorMessage, type TxDeps, type TxPhase, type TxRequest } from '../components/onchain/tx-flow';
+import { ApiError } from '../lib/api-client';
 import { formatStudyDate, originLabel } from '../components/patient-studies/studies-source';
 import {
   createQrSession,
@@ -159,7 +160,7 @@ test.describe('patient studies', () => {
 
 test.describe('on-chain transactions', () => {
   const request: TxRequest = { instruction: 'dispute_record', signer: 'PatientWallet111', args: { record: 'RecordPda111' } };
-  const built = { tx_id: '6f1c2a40-0000-4000-8000-000000000001', tx_base64: 'dW5zaWduZWQ=', message_hash: 'ab', expires_in_slots: 150 };
+  const built = { tx_id: '6f1c2a40-0000-4000-8000-000000000001', tx_base64: 'dW5zaWduZWQ=', message_hash: 'ab', last_valid_block_height: 1000, expires_in_seconds: 90 };
   const sent = { signature: '5sig', explorer_url: 'https://explorer.solana.com/tx/5sig?cluster=devnet' };
 
   /** A fake API: each call to a path shifts the next scripted response (or error) for it. */
@@ -188,13 +189,13 @@ test.describe('on-chain transactions', () => {
   });
 
   test('rebuilds once when the blockhash expired while signing', async () => {
-    const api = fakeApi({ '/tx/build': [built, built], '/tx/submit': [new Error('API 409: blockhash expired'), sent] });
+    const api = fakeApi({ '/tx/build': [built, built], '/tx/submit': [new ApiError(409, 'blockhash expired'), sent] });
     await expect(runTx(request, { post: api.post, sign: async (tx) => tx })).resolves.toMatchObject({ signature: '5sig' });
     expect(api.calls.map((c) => c.path)).toEqual(['/tx/build', '/tx/submit', '/tx/build', '/tx/submit']);
   });
 
   test('gives up after a second expiry', async () => {
-    const expired = () => new Error('API 409: blockhash expired');
+    const expired = () => new ApiError(409, 'blockhash expired');
     const api = fakeApi({ '/tx/build': [built, built], '/tx/submit': [expired(), expired()] });
     await expect(runTx(request, { post: api.post, sign: async (tx) => tx })).rejects.toMatchObject({ reason: 'expired' });
   });
@@ -209,15 +210,19 @@ test.describe('on-chain transactions', () => {
   });
 
   test('maps API errors to messages the user can act on', async () => {
-    expect(txErrorMessage(new Error('API 429: budget exhausted'))).toContain('muchas operaciones');
-    expect(txErrorMessage(new Error('API 503: rpc down'))).toContain('Solana no responde');
-    expect(txErrorMessage(new Error('API 403: forbidden'))).toBe('Tu cuenta no puede hacer esto.');
+    expect(txErrorMessage(new ApiError(429, 'budget exhausted'))).toContain('muchas operaciones');
+    expect(txErrorMessage(new ApiError(503, 'rpc down'))).toContain('El servicio no responde');
+    expect(txErrorMessage(new ApiError(403, 'forbidden'))).toBe('Tu cuenta no puede hacer esto.');
     expect(txErrorMessage(new TxError('cancelled'))).toContain('No se firmó');
     expect(txErrorMessage(new Error('Failed to fetch'))).toBe('No pudimos registrarlo. Probá de nuevo.');
   });
 });
 
 test.describe('API client', () => {
+  test.beforeAll(() => {
+    process.env.NEXT_PUBLIC_API_URL ??= 'https://api.example.test';
+  });
+
   type Seen = { url: string; auth: string | null; method?: string; body?: unknown };
 
   async function withFetch(response: () => Response, run: (seen: Seen[]) => Promise<void>) {
@@ -262,9 +267,35 @@ test.describe('API client', () => {
   });
 });
 
+test.describe('API errors', () => {
+  test('a missing or rejected session asks the user to sign in again', () => {
+    const err = new ApiError(401, 'Please sign in to continue.');
+    expect(toTxError(err).reason).toBe('session');
+    expect(txErrorMessage(err)).toBe('Tu sesión venció. Volvé a iniciar sesión.');
+  });
+
+  test('a session that cannot be restored is a retryable outage, not a generic failure', () => {
+    expect(toTxError(new ApiError(503, 'Could not restore your session.')).reason).toBe('unavailable');
+  });
+
+  test('a used or expired tx_id (410) is rebuilt once like an expired blockhash', async () => {
+    let builds = 0;
+    const post: TxDeps['post'] = async <T,>(path: string) => {
+      if (path === '/tx/build') {
+        builds++;
+        return { tx_id: `6f1c2a40-0000-4000-8000-00000000000${builds}`, tx_base64: 'eA==' } as T;
+      }
+      if (builds === 1) throw new ApiError(410, 'This transaction has expired or was already used.');
+      return { signature: 'Sig111', explorer_url: 'https://explorer.solana.com/tx/Sig111' } as T;
+    };
+    const request: TxRequest = { instruction: 'void_record', signer: 'Doctor111', args: { record: 'Rec111' } };
+    await expect(runTx(request, { post, sign: async (tx) => tx })).resolves.toMatchObject({ signature: 'Sig111' });
+    expect(builds).toBe(2);
+  });
+});
+
 test.describe('program errors', () => {
-  const programError = (code: string) =>
-    new Error(`API 422: ${JSON.stringify({ statusCode: 422, code, message: 'from the IDL' })}`);
+  const programError = (code: string) => new ApiError(422, 'The request was rejected.', code);
 
   test('explain the three new program errors', () => {
     expect(txErrorMessage(programError('IssuerIsPatient'))).toBe('No podés cargarte un estudio a vos mismo. Escaneá el QR del paciente.');
@@ -281,7 +312,7 @@ test.describe('program errors', () => {
 
   test('fall back to a generic message for unknown or non-JSON failures', () => {
     expect(toTxError(programError('error_6099')).reason).toBe('failed');
-    expect(toTxError(new Error('API 422: transaction failed: blockhash not found')).reason).toBe('failed');
+    expect(toTxError(new ApiError(422, 'The request was rejected.')).reason).toBe('failed');
     expect(txErrorMessage(programError('error_6099'))).toBe('No pudimos registrarlo. Probá de nuevo.');
   });
 
@@ -290,7 +321,7 @@ test.describe('program errors', () => {
     const post: TxDeps['post'] = async <T,>(path: string) => {
       if (path === '/tx/build') {
         builds++;
-        return { tx_id: '6f1c2a40-0000-4000-8000-000000000001', tx_base64: 'eA==', message_hash: 'ab', expires_in_slots: 150 } as T;
+        return { tx_id: '6f1c2a40-0000-4000-8000-000000000001', tx_base64: 'eA==', message_hash: 'ab', last_valid_block_height: 1000, expires_in_seconds: 90 } as T;
       }
       throw programError('IssuerIsPatient');
     };

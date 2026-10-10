@@ -1,5 +1,5 @@
 import { decryptFile, importDek, sha256Hex } from '@/lib/crypto';
-import { SessionError } from '@/lib/api-client';
+import { apiStatus } from '@/lib/api-client';
 import { base64ToBytes, openSealed } from './sealed-file';
 
 /** `POST /keys/release` 200 body (docs/proyecto/servicio-llaves.md). */
@@ -37,8 +37,7 @@ const STATUS_REASONS: Record<number, OpenErrorReason> = { 401: 'session', 403: '
 
 function toOpenError(err: unknown): OpenError {
   if (err instanceof OpenError) return err;
-  if (err instanceof SessionError) return new OpenError('session');
-  const status = Number(/^API (\d{3})\b/.exec(err instanceof Error ? err.message : '')?.[1]);
+  const status = apiStatus(err) ?? 0;
   return new OpenError(STATUS_REASONS[status] ?? 'failed');
 }
 

@@ -1,4 +1,5 @@
 import { QR_TTL_SECONDS, normalizeCode, parseQrPayload } from '@/components/patient-qr/qr-session';
+import { apiStatus } from '@/lib/api-client';
 
 export type ScannedPatient = {
   name: string;
@@ -68,7 +69,7 @@ export async function lookupPatient(
     } catch (err) {
       // 401 → session; let the shell's gate handle it. 4xx → the code did not
       // resolve (unknown, expired or already burned): same "not found" state.
-      if (err instanceof Error && /^API 401:/.test(err.message)) throw err;
+      if (apiStatus(err) === 401) throw err;
       return { status: 'not-found', code: parsed.code };
     }
   }
