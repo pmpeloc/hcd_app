@@ -80,3 +80,20 @@ second account, verifying that no previous wallet is shown.
 
 SDK integration reference:
 https://docs.privy.io/authentication/user-authentication/jwt-based-auth/usage
+
+## Authenticated API client
+
+Use `apiFetch<T>('/tx/build', { method: 'POST', body: JSON.stringify(payload) })`.
+The helper reads the current Supabase session on every request and supplies the
+Bearer token automatically, including after token refresh. Do not pass a token
+as the second argument anymore; there were no callers of the old signature.
+Only relative API paths are accepted. Signed Storage upload URLs must use a
+separate fetch without the Supabase Authorization header. Redirects are refused,
+responses are not cached, and mutation requests are never retried automatically.
+
+Catch `ApiError` to inspect `status` and the program `code` (for example
+`InvalidContentHash`, `IssuerIsPatient`, or `KeyServiceIsAdmin`). Server error
+messages are not exposed verbatim. This provides the transport for integration;
+it does not connect the placeholder upload screens or create missing endpoints.
+
+Run `npm run test:api` for isolated transport tests with synthetic responses.
