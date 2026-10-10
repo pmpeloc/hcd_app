@@ -37,8 +37,8 @@ async function renderPdf(bytes: ArrayBuffer, host: HTMLElement, width: number, t
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
   // pdf.js transfers the buffer to its worker; keep the caller's copy intact.
   const task = pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)) });
-  const doc = await task.promise;
   try {
+    const doc = await task.promise;
     const dpr = window.devicePixelRatio || 1;
     for (let n = 1; n <= doc.numPages && !cancelled(); n++) {
       const page = await doc.getPage(n);
@@ -56,6 +56,7 @@ async function renderPdf(bytes: ArrayBuffer, host: HTMLElement, width: number, t
     }
     return doc.numPages;
   } finally {
+    // Destroy even when getDocument rejects, or the pdf.js worker leaks.
     void task.destroy();
   }
 }

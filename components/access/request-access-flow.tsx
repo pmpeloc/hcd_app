@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import Link from 'next/link';
 import { Check, RefreshCw, ScanLine, Send } from 'lucide-react';
 import { IconWell } from '@/components/icon-well';
@@ -8,6 +8,10 @@ import { Tile, TileCross } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { UserAvatar } from '@/components/user-avatar';
+import { useShellIdentity } from '@/components/app-shell/session-shell';
+import { createApiClient } from '@/lib/api-client';
+import { DEMO_DATA } from '@/lib/demo';
+import { lookupPatient } from '@/components/doctor-scanner/patient-lookup';
 import { requestAccess } from './access-source';
 
 export const REASON_MAX = 140;
@@ -16,17 +20,67 @@ type Status = 'editing' | 'sending' | 'sent' | 'failed';
 
 type Patient = { name: string; code: string; since: string; studyCount: number };
 
-export function RequestAccessFlow({ patient }: { patient: Patient }) {
+/** Demo identity for the card until a real patient is wired from the scanner. */
+const PLACEHOLDER_PATIENT = { name: 'Ana Martínez', since: '2026', studyCount: 4 };
+
+export function RequestAccessFlow({ code }: { code: string }) {
+  const { demo } = useShellIdentity();
+  const offline = demo || DEMO_DATA;
+  const [patient, setPatient] = useState<Patient | null>(offline ? { ...PLACEHOLDER_PATIENT, code } : null);
   const [reason, setReason] = useState('');
   const [status, setStatus] = useState<Status>('editing');
   const ids = { reason: useId(), hint: useId() };
-  const firstName = patient.name.split(' ')[0];
+  const firstName = patient?.name.split(' ')[0] ?? 'el paciente';
   const sending = status === 'sending';
+  const deps = offline ? undefined : createApiClient();
+
+  useEffect(() => {
+    if (offline || patient) return;
+    let alive = true;
+    // The lookup does not burn the code; sending the request does.
+    lookupPatient({ kind: 'typed', value: code }, deps)
+      .then((found) => {
+        if (!alive) return;
+        if (found.status === 'found') setPatient({ ...found.patient, code });
+        else setStatus('failed');
+      })
+      .catch(() => {
+        if (alive) setStatus('failed');
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, offline]);
+
+  if (!patient) {
+    return (
+      <Tile className="mt-4 flex flex-col items-start gap-3">
+        {status === 'failed' ? (
+          <>
+            <p role="alert" className="text-sm text-salua-error-ink">
+              No encontramos al paciente. El código pudo vencer o ya haberse usado.
+            </p>
+            <Button asChild variant="outline">
+              <Link href="/escanear">
+                <ScanLine aria-hidden="true" />
+                Escanear de nuevo
+              </Link>
+            </Button>
+          </>
+        ) : (
+          <p role="status" className="text-sm text-muted-foreground">
+            Buscando al paciente…
+          </p>
+        )}
+      </Tile>
+    );
+  }
 
   const send = async () => {
     setStatus('sending');
     try {
-      await requestAccess({ patientCode: patient.code, reason: reason.trim() });
+      await requestAccess({ patientCode: code, reason: reason.trim() }, deps);
       setStatus('sent');
     } catch {
       setStatus('failed');

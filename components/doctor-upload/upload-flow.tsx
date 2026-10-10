@@ -10,6 +10,11 @@ import { StatusChip } from '@/components/status-chip';
 import { Tile } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useShellIdentity } from '@/components/app-shell/session-shell';
+import { useSaluaWallet } from '@/lib/auth-providers';
+import { createApiClient } from '@/lib/api-client';
+import { DEMO_DATA } from '@/lib/demo';
+import { lookupPatient } from '@/components/doctor-scanner/patient-lookup';
 import {
   ACCEPT_ATTRIBUTE,
   checkFile,
@@ -52,7 +57,17 @@ function shortHash(hash: string) {
   return `${hash.slice(0, 6)}…${hash.slice(-6)}`;
 }
 
-export function UploadFlow({ patient }: { patient: { name: string; code: string } }) {
+/** Demo identity until the lookup resolves; shown in every patient label. */
+const PLACEHOLDER_NAME = 'Ana Martínez';
+
+export function UploadFlow({ code }: { code: string }) {
+  const { demo } = useShellIdentity();
+  const offline = demo || DEMO_DATA;
+  const wallet = useSaluaWallet();
+  const [patient, setPatient] = useState<{ name: string; code: string } | null>(
+    offline ? { name: PLACEHOLDER_NAME, code } : null,
+  );
+  const [lookupFailed, setLookupFailed] = useState(false);
   const [studyType, setStudyType] = useState('');
   const [studyDate, setStudyDate] = useState(today);
   const [origin, setOrigin] = useState<StudyOrigin>('issued');
@@ -70,6 +85,24 @@ export function UploadFlow({ patient }: { patient: { name: string; code: string 
 
   const running = status === 'running';
 
+  // The lookup does not burn the code; starting the upload does.
+  useEffect(() => {
+    if (offline || patient) return;
+    let alive = true;
+    lookupPatient({ kind: 'typed', value: code }, createApiClient())
+      .then((found) => {
+        if (!alive) return;
+        if (found.status === 'found') setPatient({ name: found.patient.name, code });
+        else setLookupFailed(true);
+      })
+      .catch(() => {
+        if (alive) setLookupFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [code, offline, patient]);
+
   // Leaving mid-upload would drop the encrypted file and its key.
   useEffect(() => {
     if (!running) return;
@@ -85,6 +118,30 @@ export function UploadFlow({ patient }: { patient: { name: string; code: string 
     setFile(problem ? null : next);
     if (fileInput.current) fileInput.current.value = '';
   };
+
+  if (!patient) {
+    return (
+      <Tile className="mt-4 flex flex-col items-start gap-3">
+        {lookupFailed ? (
+          <>
+            <p role="alert" className="text-sm text-salua-error-ink">
+              No encontramos al paciente. El código pudo vencer o ya haberse usado.
+            </p>
+            <Button asChild variant="outline">
+              <Link href="/escanear">
+                <ScanLine aria-hidden="true" />
+                Escanear de nuevo
+              </Link>
+            </Button>
+          </>
+        ) : (
+          <p role="status" className="text-sm text-muted-foreground">
+            Buscando al paciente…
+          </p>
+        )}
+      </Tile>
+    );
+  }
 
   const start = async () => {
     const missingType = !studyType.trim();
@@ -102,6 +159,7 @@ export function UploadFlow({ patient }: { patient: { name: string; code: string 
           setPhase(nextPhase);
           setPercent(nextPercent);
         },
+        offline ? undefined : { post: createApiClient().post, sign: wallet.signTx },
       );
       setResult(done);
       setPercent(100);

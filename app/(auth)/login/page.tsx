@@ -52,7 +52,12 @@ function LoginContent() {
         <p className="break-all text-sm">{session.user.email}</p>
         <div className="rounded-xl bg-slate-50 p-4">
           <h2 className="font-medium">Your Solana wallet</h2>
-          {wallet.address ? <p className="mt-2 break-all text-sm" aria-label="Wallet address">{wallet.address}</p>
+          {wallet.address ? <>
+            <p className="mt-2 break-all text-sm" aria-label="Wallet address">{wallet.address}</p>
+            {wallet.error
+              ? <><p role="alert" className="mt-2 text-sm text-red-700">{wallet.error}</p><button className="mt-2 underline" onClick={wallet.retry}>Retry wallet setup</button></>
+              : <p role="status" className="mt-2 text-sm text-slate-600">{wallet.enrolled ? 'Linked to your account.' : wallet.enrolling ? 'Linking it to your account…' : 'Preparing…'}</p>}
+          </>
             : wallet.error ? <><p role="alert" className="mt-2 text-sm text-red-700">{wallet.error}</p><button className="mt-3 underline" onClick={wallet.retry}>Retry wallet setup</button></>
               : <p role="status" className="mt-2 text-sm">Preparing your wallet…</p>}
         </div>

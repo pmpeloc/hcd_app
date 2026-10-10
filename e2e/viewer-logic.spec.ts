@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { detectKind, openRecord, type OpenDeps, type OpenPhase } from '../components/viewer/open-record';
+import { detectKind, openRecord, OpenError, type OpenDeps, type OpenPhase } from '../components/viewer/open-record';
+import { SessionError } from '../lib/api-client';
 import { base64ToBytes, bytesToBase64, IV_BYTES, openSealed, sealFile } from '../components/viewer/sealed-file';
 import { buildDemoPdf } from '../components/viewer/viewer-source';
 import { encryptFile, exportDek, generateDek, sha256Hex } from '../lib/crypto';
@@ -67,6 +68,17 @@ test('turns key service answers into reasons the doctor understands', async () =
   await expect(openRecord('rec-1', failing('API 403: no active grant'))).rejects.toMatchObject({ reason: 'no-access' });
   await expect(openRecord('rec-1', failing('API 503: log_access not confirmed'))).rejects.toMatchObject({ reason: 'unavailable' });
   await expect(openRecord('rec-1', failing('API 401: Unauthorized'))).rejects.toMatchObject({ reason: 'session' });
+});
+
+test('a session error and a storage outage keep their own reasons', async () => {
+  const { sealed, hash, dek } = await stored();
+  await expect(
+    openRecord('rec-1', { ...deps(sealed, hash, dek), releaseKey: () => Promise.reject(new SessionError()) }),
+  ).rejects.toMatchObject({ reason: 'session' });
+  // A signed-URL 403 is not an authorization failure: the viewer retries by re-acquiring the key.
+  await expect(
+    openRecord('rec-1', { ...deps(sealed, hash, dek), download: () => Promise.reject(new OpenError('unavailable')) }),
+  ).rejects.toMatchObject({ reason: 'unavailable' });
 });
 
 test('flags a file that matches its hash but not its key', async () => {

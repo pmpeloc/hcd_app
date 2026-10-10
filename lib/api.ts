@@ -9,6 +9,11 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
+    // Never forward the Bearer token through a cross-origin redirect, send
+    // cookies or serve a cached response on an authenticated endpoint.
+    redirect: 'error',
+    credentials: 'omit',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,

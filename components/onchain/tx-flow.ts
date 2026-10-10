@@ -4,6 +4,8 @@
  * Contract: `hcd_api` `src/tx/tx-schemas.ts` and `docs/proyecto/modulo-tx.md`.
  */
 
+import { SessionError } from '@/lib/api-client';
+
 /** The user-signed instructions the app sends. `signer` is the user's own wallet. */
 export type TxRequest =
   | {
@@ -16,7 +18,7 @@ export type TxRequest =
   | { instruction: 'revoke_access'; signer: string; args: { grant: string } }
   | { instruction: 'void_record'; signer: string; args: { record: string } };
 
-type BuildResponse = { tx_id: string; tx_base64: string; message_hash: string; expires_in_slots: number };
+type BuildResponse = { tx_id: string; tx_base64: string; message_hash: string; expires_in_seconds: number };
 type SubmitResponse = { signature: string; explorer_url: string };
 
 export type TxPhase = 'building' | 'signing' | 'sending';
@@ -46,6 +48,7 @@ const STATUS_REASONS: Record<number, TxErrorReason> = {
   401: 'session',
   403: 'forbidden',
   409: 'expired',
+  410: 'expired', // tx_id unknown, used or expired: same rebuild-and-resign path as a dead blockhash
   429: 'busy',
   503: 'unavailable',
 };
@@ -56,6 +59,7 @@ const STATUS_REASONS: Record<number, TxErrorReason> = {
  */
 export function toTxError(err: unknown): TxError {
   if (err instanceof TxError) return err;
+  if (err instanceof SessionError) return new TxError('session');
   const match = /^API (\d{3}): ?([\s\S]*)$/.exec(err instanceof Error ? err.message : '');
   if (!match) return new TxError('failed');
   const status = Number(match[1]);

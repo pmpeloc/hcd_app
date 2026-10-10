@@ -1,4 +1,5 @@
 import { decryptFile, importDek, sha256Hex } from '@/lib/crypto';
+import { SessionError } from '@/lib/api-client';
 import { base64ToBytes, openSealed } from './sealed-file';
 
 /** `POST /keys/release` 200 body (docs/proyecto/servicio-llaves.md). */
@@ -8,8 +9,9 @@ export type OpenDeps = {
   releaseKey: (recordId: string) => Promise<ReleasedKey>;
   download: (url: string) => Promise<ArrayBuffer>;
   /**
-   * `content_hash` of the on-chain Record. Until the app can read Record accounts, the viewer falls
-   * back to the hash the key service returns (read from `records`, written at issue time).
+   * `content_hash` of the on-chain Record (via `GET /records/:id/chain-hash`).
+   * Null — e.g. while the record is `pending_chain` — falls back to the hash
+   * the key service returns, which only proves storage integrity.
    */
   onchainHash?: (recordId: string) => Promise<string | null>;
 };
@@ -35,6 +37,7 @@ const STATUS_REASONS: Record<number, OpenErrorReason> = { 401: 'session', 403: '
 
 function toOpenError(err: unknown): OpenError {
   if (err instanceof OpenError) return err;
+  if (err instanceof SessionError) return new OpenError('session');
   const status = Number(/^API (\d{3})\b/.exec(err instanceof Error ? err.message : '')?.[1]);
   return new OpenError(STATUS_REASONS[status] ?? 'failed');
 }

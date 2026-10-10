@@ -30,12 +30,81 @@ export type Grant = {
   grantedAt: number;
   expiresAt: number;
   status: GrantStatus;
+  /** One grant PDA per covered record — `revoke_access` signs each. */
+  grantPdas: string[];
 };
 
 export type MyAccess = { requests: AccessRequest[]; grants: Grant[] };
 
 /** A request covers every active study: "Toda tu historia". */
 export const FULL_HISTORY = 'Toda tu historia';
+
+export type ReadDeps = {
+  get: <T>(path: string) => Promise<T>;
+};
+
+export type TxDeps = {
+  post: <T>(path: string, body: unknown) => Promise<T>;
+  sign: (txBase64: string) => Promise<string>;
+};
+
+/** `GET /access-requests/mine` row, after the service flattened the embeds. */
+type ApiRequestRow = {
+  request_id: string;
+  status: 'pending' | 'approved' | 'denied' | 'expired';
+  reason: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  granted_expires_at: string | null;
+  doctor: {
+    name: string;
+    license: string;
+    specialty: string;
+    clinic: string | null;
+    wallet_pubkey: string;
+  } | null;
+  records: { record_id: string; record_pda: string; grant_pda: string }[];
+};
+
+const toDoctor = (d: NonNullable<ApiRequestRow['doctor']>): Doctor => ({
+  name: d.name,
+  specialty: d.specialty,
+  license: d.license,
+  verified: true, // the API only lets verified doctors request access
+});
+
+function toAccess(row: ApiRequestRow): { request?: AccessRequest; grant?: Grant } {
+  if (!row.doctor) return {};
+  const doctor = toDoctor(row.doctor);
+  const clinic = row.doctor.clinic ?? 'Sin clínica';
+  if (row.status === 'pending') {
+    return {
+      request: {
+        id: row.request_id,
+        doctor,
+        clinic,
+        reason: row.reason ?? 'Quiere ver tu historia clínica.',
+        requestedAt: Date.parse(row.created_at),
+      },
+    };
+  }
+  if (row.status === 'approved') {
+    const expiresAt = row.granted_expires_at ? Date.parse(row.granted_expires_at) : 0;
+    return {
+      grant: {
+        id: row.request_id,
+        doctor,
+        clinic,
+        scope: FULL_HISTORY,
+        grantedAt: Date.parse(row.resolved_at ?? row.created_at),
+        expiresAt,
+        status: expiresAt <= Date.now() ? 'expired' : 'active',
+        grantPdas: row.records.map((record) => record.grant_pda),
+      },
+    };
+  }
+  return {};
+}
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -66,6 +135,7 @@ function sampleAccess(now: number): MyAccess {
         grantedAt: now - 3 * HOUR,
         expiresAt: now + 21 * HOUR,
         status: 'active',
+        grantPdas: [],
       },
       {
         id: 'grant-paz',
@@ -75,6 +145,7 @@ function sampleAccess(now: number): MyAccess {
         grantedAt: now - 4 * DAY,
         expiresAt: now - 3 * DAY,
         status: 'revoked',
+        grantPdas: [],
       },
       {
         id: 'grant-vega',
@@ -84,6 +155,7 @@ function sampleAccess(now: number): MyAccess {
         grantedAt: now - 10 * DAY,
         expiresAt: now - 9 * DAY,
         status: 'expired',
+        grantPdas: [],
       },
     ],
   };
@@ -92,10 +164,21 @@ function sampleAccess(now: number): MyAccess {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Pending requests and every grant the patient gave.
- * Placeholder: swap for `GET /access-requests/mine` plus the patient's grants once the API exposes them.
+ * Pending requests and every grant the patient gave. With API deps this is
+ * `GET /access-requests/mine`; without them the sample set keeps demo mode
+ * and the logic tests working.
  */
-export async function getMyAccess(): Promise<MyAccess> {
+export async function getMyAccess(deps?: ReadDeps): Promise<MyAccess> {
+  if (deps) {
+    const { requests } = await deps.get<{ requests: ApiRequestRow[] }>('/access-requests/mine');
+    const access: MyAccess = { requests: [], grants: [] };
+    for (const row of requests) {
+      const { request, grant } = toAccess(row);
+      if (request) access.requests.push(request);
+      if (grant) access.grants.push(grant);
+    }
+    return access;
+  }
   await wait(300);
   return sampleAccess(Date.now());
 }
@@ -105,12 +188,56 @@ export function expiryFor(duration: AccessDurationId, from: number): number {
   return from + hours * HOUR;
 }
 
+const DURATION_SECONDS: Record<AccessDurationId, number> = {
+  '1h': 3600,
+  '24h': 86400,
+  '7d': 604800,
+};
+
+type ApproveResponse = {
+  request_id: string;
+  status: 'approved';
+  granted_expires_at: string;
+  build_requests: {
+    instruction: 'grant_access';
+    signer: string;
+    args: { record: string; doctor: string; expires_at: number };
+    grant_pda: string;
+  }[];
+};
+
 /**
- * Approves a request for the chosen time. On-chain the patient signs one `grant_access` per active
- * study (`components/onchain/tx-flow.ts`), so the doctor's reads are checked by the program.
- * Placeholder until `GET /patients/me/records` gives the record PDAs and the wallet can sign.
+ * Approves a request for the chosen time. `POST /access-requests/:id/approve`
+ * marks it off-chain and returns one `grant_access` build request per active
+ * study; the patient signs each, so the doctor's reads are checked by the
+ * program (`components/onchain/tx-flow.ts`). Without deps the demo grant
+ * stands in.
  */
-export async function approveRequest(request: AccessRequest, duration: AccessDurationId): Promise<Grant> {
+export async function approveRequest(request: AccessRequest, duration: AccessDurationId, deps?: TxDeps): Promise<Grant> {
+  if (deps) {
+    const { runTx } = await import('@/components/onchain/tx-flow');
+    const approved = await deps.post<ApproveResponse>(`/access-requests/${request.id}/approve`, {
+      duration_seconds: DURATION_SECONDS[duration],
+    });
+    for (const build of approved.build_requests) {
+      // The patient signs each grant in turn, so the awaits stay sequential.
+      await runTx(
+        { instruction: build.instruction, signer: build.signer, args: build.args },
+        deps,
+      );
+    }
+    const now = Date.now();
+    return {
+      id: approved.request_id,
+      doctor: request.doctor,
+      clinic: request.clinic,
+      scope: FULL_HISTORY,
+      grantedAt: now,
+      expiresAt: Date.parse(approved.granted_expires_at),
+      status: 'active',
+      grantPdas: approved.build_requests.map((build) => build.grant_pda),
+    };
+  }
   await wait(800);
   const now = Date.now();
   return {
@@ -121,26 +248,65 @@ export async function approveRequest(request: AccessRequest, duration: AccessDur
     grantedAt: now,
     expiresAt: expiryFor(duration, now),
     status: 'active',
+    grantPdas: [],
   };
 }
 
-/** Declines a request. Off-chain only. Placeholder: needs an endpoint in the access module. */
-export async function rejectRequest(id: string): Promise<void> {
+/**
+ * Declines a request: `POST /access-requests/:id/deny`. Off-chain only — the
+ * doctor learns "no" without anything being written to Solana.
+ */
+export async function rejectRequest(id: string, deps?: Pick<TxDeps, 'post'>): Promise<void> {
+  if (deps) {
+    await deps.post(`/access-requests/${id}/deny`, {});
+    return;
+  }
   await wait(400);
   if (!id) throw new Error('not-found');
 }
 
-/** Closes a grant before it expires. On-chain this is `revoke_access`, signed by the patient. Placeholder. */
-export async function revokeGrant(id: string): Promise<void> {
+/**
+ * Closes a grant before it expires. On-chain this is one `revoke_access` per
+ * covered record, signed by the patient. Without deps (or a demo grant, which
+ * carries no PDAs) the sample wait stands in.
+ */
+export async function revokeGrant(grant: Pick<Grant, 'id' | 'grantPdas'>, deps?: TxDeps, signer?: string): Promise<void> {
+  if (deps && signer) {
+    const { runTx } = await import('@/components/onchain/tx-flow');
+    for (const grantPda of grant.grantPdas) {
+      // The patient signs each revoke in turn, so the awaits stay sequential.
+      await runTx({ instruction: 'revoke_access', signer, args: { grant: grantPda } }, deps);
+    }
+    return;
+  }
   await wait(700);
-  if (!id) throw new Error('not-found');
+  if (!grant.id) throw new Error('not-found');
 }
 
+export type AccessDeps = {
+  /** POSTs JSON to the API with the user's session token. */
+  post: <T>(path: string, body: unknown) => Promise<T>;
+  /** GETs JSON from the API with the user's session token. */
+  get: <T>(path: string) => Promise<T>;
+};
+
 /**
- * The doctor asks a patient for access. Placeholder: swap for `POST /access-requests`.
- * Demo hook: the code SAL-EEEE fails, so the error state can be shown.
+ * The doctor asks a patient for access. With API deps this is
+ * `POST /access-requests`, which burns the one-time code. Without deps the
+ * demo hook stands in: the code SAL-EEEE fails, so the error state shows.
  */
-export async function requestAccess(input: { patientCode: string; reason: string }): Promise<{ id: string }> {
+export async function requestAccess(
+  input: { patientCode: string; reason: string },
+  deps?: AccessDeps,
+): Promise<{ id: string }> {
+  if (deps) {
+    const created = await deps.post<{ request_id: string }>('/access-requests', {
+      patient_code: input.patientCode,
+      // The API needs a reason; the UI keeps it optional.
+      reason: input.reason || 'Consulta',
+    });
+    return { id: created.request_id };
+  }
   await wait(700);
   if (input.patientCode === 'SAL-EEEE') throw new Error('request-failed');
   return { id: `req-${input.patientCode.toLowerCase()}` };

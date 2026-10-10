@@ -12,7 +12,7 @@ import {
 } from '../components/access/access-source';
 import { lookupPatient } from '../components/doctor-scanner/patient-lookup';
 import { checkFile, formatBytes, MAX_FILE_BYTES, uploadRecord, type UploadPhase } from '../components/doctor-upload/upload-record';
-import { createApiClient } from '../components/onchain/api-client';
+import { createApiClient } from '../lib/api-client';
 import { runTx, toTxError, TxError, txErrorMessage, type TxDeps, type TxPhase, type TxRequest } from '../components/onchain/tx-flow';
 import { formatStudyDate, originLabel } from '../components/patient-studies/studies-source';
 import {

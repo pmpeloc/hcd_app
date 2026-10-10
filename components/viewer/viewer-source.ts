@@ -1,7 +1,9 @@
-import { createApiClient } from '@/components/onchain/api-client';
+// The viewer depends on the authenticated API client that app#11 introduced
+// (lib/api-client.ts): this branch must merge after that one.
+import { createApiClient } from '@/lib/api-client';
 import type { Study } from '@/components/patient-studies/studies-source';
 import { encryptFile, exportDek, generateDek, sha256Hex } from '@/lib/crypto';
-import type { OpenDeps, ReleasedKey } from './open-record';
+import { OpenError, type OpenDeps, type ReleasedKey } from './open-record';
 import { bytesToBase64, sealFile } from './sealed-file';
 
 /** What the viewer shows around the document. */
@@ -30,6 +32,13 @@ const DEMO_ID_SET = new Set<string>(Object.values(DEMO_RECORDS));
 
 export const isDemoRecord = (id: string) => DEMO_ID_SET.has(id);
 
+/**
+ * e2e and demo builds can opt in to the synthetic records even with a signed-in
+ * session. Never set in production: there demo ids must hit `/keys/release` like
+ * any unknown record id.
+ */
+export { DEMO_DATA as DEMO_RECORDS_ENABLED } from '@/lib/demo';
+
 function demoRecord(id: string, now: number): ViewerRecord {
   const base = {
     id,
@@ -49,11 +58,13 @@ function demoRecord(id: string, now: number): ViewerRecord {
 }
 
 /**
- * The study's details. Demo ids return sample data.
+ * The study's details. Demo ids return sample data, but only in demo mode:
+ * in production a synthetic id must behave like any unknown record id
+ * (a real `/keys/release` 404), never render a fake "verified" study.
  * Placeholder for real ids: needs the record's metadata and the doctor's grant from the API.
  */
-export async function getViewerRecord(id: string): Promise<ViewerRecord | null> {
-  return isDemoRecord(id) ? demoRecord(id, Date.now()) : null;
+export async function getViewerRecord(id: string, demo: boolean): Promise<ViewerRecord | null> {
+  return demo && isDemoRecord(id) ? demoRecord(id, Date.now()) : null;
 }
 
 // --- Demo file: a synthetic report, encrypted for real on every open ----------------------------
@@ -135,19 +146,47 @@ function demoDeps(record: ViewerRecord): OpenDeps {
   };
 }
 
-/** `/keys/release` with the session's Bearer token, then the signed download URL (valid 60 s). */
+/**
+ * `/keys/release` with the session's Bearer token, then the signed download URL.
+ * The signed URL lives ~60 s: a storage 403 or network failure is NOT an
+ * authorization problem, so it throws `unavailable` and the retry re-runs
+ * `releaseKey` for a fresh URL instead of telling the reader they have no access.
+ */
 function apiDeps(): OpenDeps {
   const api = createApiClient();
   return {
-    releaseKey: (id) => api.post<ReleasedKey>('/keys/release', { record_id: id }),
+    releaseKey: async (id): Promise<ReleasedKey> => {
+      const key = await api.post<ReleasedKey>('/keys/release', { record_id: id });
+      if (typeof key.expires_in !== 'number' || key.expires_in <= 0)
+        throw new OpenError('unavailable');
+      return key;
+    },
     download: async (url) => {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`API ${res.status}: download`);
+      let res: Response;
+      try {
+        res = await fetch(url);
+      } catch {
+        throw new OpenError('unavailable');
+      }
+      if (!res.ok) throw new OpenError('unavailable');
       return res.arrayBuffer();
+    },
+    // The hash anchored on-chain, read from the Record account through the API.
+    // Null (e.g. still pending_chain) falls back to the release hash — which
+    // only proves storage integrity, not that the API served the signed hash.
+    onchainHash: async (id) => {
+      try {
+        const res = await api.get<{ content_hash: string | null }>(
+          `/records/${id}/chain-hash`,
+        );
+        return res.content_hash;
+      } catch {
+        return null;
+      }
     },
   };
 }
 
-export function depsFor(id: string, record: ViewerRecord | null): OpenDeps {
-  return record && isDemoRecord(id) ? demoDeps(record) : apiDeps();
+export function depsFor(id: string, record: ViewerRecord | null, demo: boolean): OpenDeps {
+  return demo && record && isDemoRecord(id) ? demoDeps(record) : apiDeps();
 }

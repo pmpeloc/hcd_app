@@ -11,6 +11,10 @@ import { StatusChip } from '@/components/status-chip';
 import { Tile, TileCross, TileDots } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 import { UserAvatar } from '@/components/user-avatar';
+import { useShellIdentity } from '@/components/app-shell/session-shell';
+import { useSaluaWallet } from '@/lib/auth-providers';
+import { createApiClient } from '@/lib/api-client';
+import { DEMO_DATA } from '@/lib/demo';
 import {
   approveRequest,
   effectiveStatus,
@@ -46,6 +50,9 @@ const formatDay = (t: number) => {
 };
 
 export function AccessCenter() {
+  const { demo } = useShellIdentity();
+  const offline = demo || DEMO_DATA;
+  const wallet = useSaluaWallet();
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [announcement, setAnnouncement] = useState('');
   const [revoking, setRevoking] = useState<Grant | null>(null);
@@ -56,11 +63,11 @@ export function AccessCenter() {
   const load = useCallback(async () => {
     setState({ phase: 'loading' });
     try {
-      setState({ phase: 'ready', access: await getMyAccess() });
+      setState({ phase: 'ready', access: await getMyAccess(offline ? undefined : createApiClient()) });
     } catch {
       setState({ phase: 'error' });
     }
-  }, []);
+  }, [offline]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -86,7 +93,11 @@ export function AccessCenter() {
     setRevokeBusy(true);
     setRevokeError('');
     try {
-      await revokeGrant(revoking.id);
+      await revokeGrant(
+        revoking,
+        offline ? undefined : { post: createApiClient().post, sign: wallet.signTx },
+        offline ? undefined : wallet.address,
+      );
       const closedAt = Date.now();
       update((a) => ({
         ...a,
@@ -147,7 +158,7 @@ export function AccessCenter() {
         </Tile>
       ) : (
         requests.map((request) => (
-          <RequestDecision key={request.id} request={request} now={now} onApproved={onApproved} onRejected={onRejected} />
+          <RequestDecision key={request.id} request={request} now={now} offline={offline} onApproved={onApproved} onRejected={onRejected} />
         ))
       )}
 
@@ -263,11 +274,13 @@ export function AccessCenter() {
 type RequestDecisionProps = {
   request: AccessRequest;
   now: number;
+  offline: boolean;
   onApproved: (request: AccessRequest, grant: Grant) => void;
   onRejected: (request: AccessRequest) => void;
 };
 
-function RequestDecision({ request, now, onApproved, onRejected }: RequestDecisionProps) {
+function RequestDecision({ request, now, offline, onApproved, onRejected }: RequestDecisionProps) {
+  const wallet = useSaluaWallet();
   const [duration, setDuration] = useState<AccessDurationId>('24h');
   const [busy, setBusy] = useState<'approve' | 'reject' | null>(null);
   const [error, setError] = useState('');
@@ -278,9 +291,11 @@ function RequestDecision({ request, now, onApproved, onRejected }: RequestDecisi
     setBusy(action);
     setError('');
     try {
-      if (action === 'approve') onApproved(request, await approveRequest(request, duration));
+      const api = offline ? undefined : createApiClient();
+      if (action === 'approve')
+        onApproved(request, await approveRequest(request, duration, api ? { post: api.post, sign: wallet.signTx } : undefined));
       else {
-        await rejectRequest(request.id);
+        await rejectRequest(request.id, api);
         onRejected(request);
       }
     } catch {

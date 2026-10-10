@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Check, Clock, KeyRound, Lock, RefreshCw, Send, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useShellIdentity } from '@/components/app-shell/session-shell';
@@ -15,7 +15,7 @@ import { getSupabaseClient } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { DocumentCanvas } from './document-canvas';
 import { openRecord, OpenError, type DocKind, type OpenErrorReason, type OpenPhase } from './open-record';
-import { depsFor, getViewerRecord, isDemoRecord, type ViewerRecord } from './viewer-source';
+import { DEMO_RECORDS_ENABLED, depsFor, getViewerRecord, isDemoRecord, type ViewerRecord } from './viewer-source';
 
 type ViewState =
   | { phase: 'loading' }
@@ -41,8 +41,8 @@ const ERRORS: Record<OpenErrorReason, { title: string; body: string; retry: bool
   session: { title: 'Tu sesión venció', body: 'Volvé a iniciar sesión para abrir el estudio.', retry: false },
   'not-found': { title: 'No encontramos este estudio', body: 'Revisá el enlace o abrilo desde Mis accesos.', retry: false },
   unavailable: {
-    title: 'No pudimos registrar el acceso',
-    body: 'Sin el registro en Solana no se entrega la llave. Probá en unos minutos.',
+    title: 'No pudimos completar el acceso',
+    body: 'La llave o el archivo no respondieron (el enlace de descarga también vence rápido). Probá de nuevo: pedimos uno nuevo.',
     retry: true,
   },
   corrupt: {
@@ -86,29 +86,41 @@ function useDoctorLicense(demo: boolean): string | undefined {
 
 export function RecordViewer({ recordId }: { recordId: string }) {
   const identity = useShellIdentity();
+  const demo = identity.demo || DEMO_RECORDS_ENABLED;
   const license = useDoctorLicense(identity.demo);
   const [record, setRecord] = useState<ViewerRecord | null>(null);
   const [state, setState] = useState<ViewState>({ phase: 'loading' });
   const [now, setNow] = useState(() => Date.now());
   const [openedAt, setOpenedAt] = useState(() => Date.now());
 
+  // Generation counter: a stale open (e.g. /visor/A resolving after the user
+  // navigated to /visor/B) must never paint record A under record B.
+  const generation = useRef(0);
+
   const open = useCallback(async () => {
+    const gen = ++generation.current;
+    const alive = () => generation.current === gen;
     setState({ phase: 'loading' });
     setOpenedAt(Date.now());
-    const meta = await getViewerRecord(recordId).catch(() => null);
+    const meta = await getViewerRecord(recordId, demo).catch(() => null);
+    if (!alive()) return;
     setRecord(meta);
     if (meta?.grant && meta.grant.expiresAt <= Date.now()) {
       setState({ phase: 'expired' });
       return;
     }
     try {
-      const result = await openRecord(recordId, depsFor(recordId, meta), (step) => setState({ phase: 'opening', step }));
+      const result = await openRecord(recordId, depsFor(recordId, meta, demo), (step) => {
+        if (alive()) setState({ phase: 'opening', step });
+      });
+      if (!alive()) return;
       setState(result.status === 'ok' ? { phase: 'ok', ...result } : { phase: 'altered', expected: result.expected, actual: result.actual });
     } catch (err) {
+      if (!alive()) return;
       const reason = err instanceof OpenError ? err.reason : 'failed';
       setState(reason === 'no-access' && meta?.grant && meta.grant.expiresAt <= Date.now() ? { phase: 'expired' } : { phase: 'error', reason });
     }
-  }, [recordId]);
+  }, [recordId, demo]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -261,7 +273,7 @@ export function RecordViewer({ recordId }: { recordId: string }) {
               <p className="sr-only">{originLabel(record.origin)}</p>
             </Tile>
           )}
-          {!isDemoRecord(recordId) && !record && (
+          {!(isDemoRecord(recordId) && demo) && !record && (
             <p className="px-1 text-[13px] text-muted-foreground">Los datos del emisor y del permiso todavía no están disponibles para este estudio.</p>
           )}
         </div>

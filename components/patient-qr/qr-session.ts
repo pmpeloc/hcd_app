@@ -20,12 +20,38 @@ function randomCode(): string {
   return `SAL-${Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('')}`;
 }
 
+export type QrSessionDeps = {
+  /** POSTs JSON to the API with the user's session token. */
+  post: <T>(path: string, body: unknown) => Promise<T>;
+};
+
+type RecordCodeResponse = {
+  patient_code: string;
+  code: string;
+  expires_in_seconds: number;
+};
+
 /**
  * Issues a new one-time code for the patient's account (their Privy wallet).
- * The code is generated in the browser for now; once the API exposes it, the
- * backend should issue and remember it so the doctor's scanner can validate it.
+ * With API deps the backend mints the code (`POST /patients/me/record-code`)
+ * so the doctor's scanner can resolve it; without them the code is a local
+ * stand-in used by demo mode and the logic tests.
  */
-export async function createQrSession(account: string): Promise<QrSession> {
+export async function createQrSession(
+  account: string,
+  deps?: QrSessionDeps,
+): Promise<QrSession> {
+  if (deps) {
+    const issued = await deps.post<RecordCodeResponse>(
+      '/patients/me/record-code',
+      {},
+    );
+    return {
+      code: issued.code,
+      account,
+      expiresAt: Date.now() + issued.expires_in_seconds * 1000,
+    };
+  }
   await new Promise((resolve) => setTimeout(resolve, 350));
   return {
     code: randomCode(),

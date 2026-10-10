@@ -1,12 +1,23 @@
 import { apiFetch } from '@/lib/api';
 import { getSupabaseClient } from '@/lib/supabase';
 
+/**
+ * The caller has no usable session. Dedicated type so callers do not sniff
+ * `'API 401: no session'` out of an error string (spoofable).
+ */
+export class SessionError extends Error {
+  constructor() {
+    super('no session');
+    this.name = 'SessionError';
+  }
+}
+
 /** Returns the caller's current Supabase access token; Supabase refreshes it before it expires. */
 export type TokenSource = () => Promise<string>;
 
 export async function sessionToken(): Promise<string> {
   const { data, error } = await getSupabaseClient().auth.getSession();
-  if (error || !data.session) throw new Error('API 401: no session');
+  if (error || !data.session) throw new SessionError();
   return data.session.access_token;
 }
 
