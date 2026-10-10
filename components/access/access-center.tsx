@@ -78,7 +78,11 @@ export function AccessCenter() {
     setState((prev) => (prev.phase === 'ready' ? { phase: 'ready', access: fn(prev.access) } : prev));
 
   const onApproved = (request: AccessRequest, grant: Grant) => {
-    update((a) => ({ requests: a.requests.filter((r) => r.id !== request.id), grants: [grant, ...a.grants] }));
+    update((a) => ({
+      requests: a.requests.filter((r) => r.id !== request.id),
+      // A resumed approval already has a (partial) grant card: replace it.
+      grants: [grant, ...a.grants.filter((g) => g.id !== grant.id)],
+    }));
     const { value, unit } = formatRemaining(grant.expiresAt - grant.grantedAt);
     setAnnouncement(`Aprobaste ${value} ${unit} a ${request.doctor.name}. Se cierra ${formatCloses(grant.expiresAt, Date.now())}.`);
   };

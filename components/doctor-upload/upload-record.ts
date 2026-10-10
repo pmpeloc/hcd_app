@@ -62,6 +62,20 @@ export function formatBytes(bytes: number): string {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * The study is stored and registered, but `issue_record` was not signed or
+ * sent. The patient code and the upload reservation are already spent, so a
+ * full retry would 403: `resume()` signs only the anchoring transaction.
+ */
+export class AnchorPendingError extends Error {
+  constructor(
+    readonly resume: () => Promise<UploadResult>,
+    readonly cause: unknown,
+  ) {
+    super('anchor-pending');
+  }
+}
+
+/**
  * Encrypts the study in the browser and hands it to the backend.
  * Encryption is real (lib/crypto, AES-256-GCM). What gets stored is the sealed file,
  * `iv || ciphertext` (components/viewer/sealed-file.ts), and `contentHash` is its SHA-256.
@@ -125,8 +139,14 @@ export async function uploadRecord(
     encryption_iv: bytesToBase64(iv),
   });
   onProgress('registering', 85);
-  const tx = await runTx(created.build_request, deps, () => {});
-  onProgress('registering', 95);
-
-  return { recordId: created.record_id, contentHash, explorerUrl: tx.explorerUrl };
+  const anchor = async (): Promise<UploadResult> => {
+    const tx = await runTx(created.build_request, deps, () => {});
+    onProgress('registering', 95);
+    return { recordId: created.record_id, contentHash, explorerUrl: tx.explorerUrl };
+  };
+  try {
+    return await anchor();
+  } catch (err) {
+    throw new AnchorPendingError(anchor, err);
+  }
 }

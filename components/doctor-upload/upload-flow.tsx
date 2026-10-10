@@ -20,6 +20,7 @@ import {
   checkFile,
   formatBytes,
   uploadRecord,
+  AnchorPendingError,
   type StudyOrigin,
   type UploadPhase,
   type UploadResult,
@@ -80,6 +81,8 @@ export function UploadFlow({ code }: { code: string }) {
   const [percent, setPercent] = useState(0);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  // Set when only the issue_record signature is left (see AnchorPendingError).
+  const [resumeAnchor, setResumeAnchor] = useState<(() => Promise<UploadResult>) | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const ids = { type: useId(), date: useId(), file: useId(), typeErr: useId(), fileErr: useId(), list: useId() };
 
@@ -150,28 +153,43 @@ export function UploadFlow({ code }: { code: string }) {
     if (missingType || !file) return;
 
     setStatus('running');
-    setPercent(0);
-    setAnnouncement('Cifrando el estudio en tu navegador…');
+    const resume = resumeAnchor;
+    if (resume) {
+      setPhase('registering');
+      setAnnouncement('Firmando el registro del estudio…');
+    } else {
+      setPercent(0);
+      setAnnouncement('Cifrando el estudio en tu navegador…');
+    }
     try {
-      const done = await uploadRecord(
-        { patientCode: patient.code, studyType: studyType.trim(), studyDate, origin, file },
-        (nextPhase, nextPercent) => {
-          setPhase(nextPhase);
-          setPercent(nextPercent);
-        },
-        offline ? undefined : { post: createApiClient().post, sign: wallet.signTx },
-      );
+      const done = resume
+        ? await resume()
+        : await uploadRecord(
+            { patientCode: patient.code, studyType: studyType.trim(), studyDate, origin, file },
+            (nextPhase, nextPercent) => {
+              setPhase(nextPhase);
+              setPercent(nextPercent);
+            },
+            offline ? undefined : { post: createApiClient().post, sign: wallet.signTx },
+          );
+      setResumeAnchor(null);
       setResult(done);
       setPercent(100);
       setStatus('done');
       setAnnouncement(`Listo. ${patient.name} ya puede ver el estudio en su historia.`);
-    } catch {
+    } catch (err) {
+      if (err instanceof AnchorPendingError) setResumeAnchor(() => err.resume);
       setStatus('failed');
-      setAnnouncement('No se pudo subir el estudio. Probá de nuevo.');
+      setAnnouncement(
+        err instanceof AnchorPendingError
+          ? 'El estudio quedó subido pero falta firmar su registro. Probá de nuevo.'
+          : 'No se pudo subir el estudio. Probá de nuevo.',
+      );
     }
   };
 
   const reset = () => {
+    setResumeAnchor(null);
     setStudyType('');
     setStudyDate(today());
     setOrigin('issued');

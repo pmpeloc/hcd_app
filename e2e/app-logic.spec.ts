@@ -6,8 +6,10 @@ import {
   formatAgo,
   formatCloses,
   formatRemaining,
+  getMyAccess,
   grantProgress,
   requestAccess,
+  revokeGrant,
   type Grant,
 } from '../components/access/access-source';
 import { lookupPatient } from '../components/doctor-scanner/patient-lookup';
@@ -328,6 +330,52 @@ test.describe('program errors', () => {
     const request: TxRequest = { instruction: 'void_record', signer: 'Doctor111', args: { record: 'Rec111' } };
     await expect(runTx(request, { post, sign: async (tx) => tx })).rejects.toMatchObject({ reason: 'program', programError: 'IssuerIsPatient' });
     expect(builds).toBe(1);
+  });
+});
+
+test.describe('access state from the API', () => {
+  const doctor = { name: 'Dra. Prueba', license: 'MN 1', specialty: 'Clínica', clinic: 'Clínica Demo', wallet_pubkey: 'Doc111' };
+  const row = (status: string, grants: string[]) => ({
+    request_id: 'req-1',
+    status,
+    reason: 'Consulta',
+    created_at: new Date(Date.now() - 3_600_000).toISOString(),
+    resolved_at: new Date().toISOString(),
+    granted_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+    doctor,
+    records: grants.map((grant_status, i) => ({ record_id: `r${i}`, record_pda: `R${i}`, grant_pda: `G${i}`, grant_status })),
+  });
+  const api = (rows: unknown[]) => ({ get: async <T,>() => ({ requests: rows }) as T });
+
+  test('a grant revoked on-chain shows as revoked, with nothing left to revoke', async () => {
+    const access = await getMyAccess(api([row('revoked', ['revoked'])]));
+    expect(access.grants[0]).toMatchObject({ status: 'revoked', grantPdas: [] });
+    expect(access.requests).toHaveLength(0);
+  });
+
+  test('an approval with unsigned grants stays in the inbox to finish signing', async () => {
+    const access = await getMyAccess(api([row('approved', ['active', 'missing'])]));
+    expect(access.requests.map((r) => r.id)).toEqual(['req-1']);
+    expect(access.grants[0]).toMatchObject({ status: 'active', grantPdas: ['G0'] });
+  });
+
+  test('revoking with a live API never fakes success', async () => {
+    const deps = { post: async <T,>() => ({}) as T, sign: async (tx: string) => tx };
+    await expect(revokeGrant({ id: 'g', grantPdas: ['G0'] }, deps, undefined)).rejects.toThrow('wallet-unavailable');
+    await expect(revokeGrant({ id: 'g', grantPdas: [] }, deps, 'Pat111')).rejects.toThrow('nothing-to-revoke');
+  });
+
+  test('a short reason still meets the API minimum', async () => {
+    let sent: { reason?: string } = {};
+    const deps = {
+      get: async <T,>() => ({}) as T,
+      post: async <T,>(_path: string, body: unknown) => {
+        sent = body as { reason?: string };
+        return { request_id: 'req-2' } as T;
+      },
+    };
+    await requestAccess({ patientCode: 'SAL-ABCD', reason: 'ok' }, deps);
+    expect(sent.reason).toBe('Consulta: ok');
   });
 });
 

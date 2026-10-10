@@ -51,7 +51,8 @@ export type TxDeps = {
 /** `GET /access-requests/mine` row, after the service flattened the embeds. */
 type ApiRequestRow = {
   request_id: string;
-  status: 'pending' | 'approved' | 'denied' | 'expired';
+  /** 'revoked' / 'expired' come from the on-chain grants, not the off-chain row. */
+  status: 'pending' | 'approved' | 'denied' | 'expired' | 'revoked';
   reason: string | null;
   created_at: string;
   resolved_at: string | null;
@@ -63,7 +64,13 @@ type ApiRequestRow = {
     clinic: string | null;
     wallet_pubkey: string;
   } | null;
-  records: { record_id: string; record_pda: string; grant_pda: string }[];
+  records: {
+    record_id: string;
+    record_pda: string;
+    grant_pda: string;
+    /** What the AccessGrant account says now; 'missing' = approved but never signed. */
+    grant_status: 'active' | 'revoked' | 'expired' | 'missing' | 'unknown';
+  }[];
 };
 
 const toDoctor = (d: NonNullable<ApiRequestRow['doctor']>): Doctor => ({
@@ -77,30 +84,39 @@ function toAccess(row: ApiRequestRow): { request?: AccessRequest; grant?: Grant 
   if (!row.doctor) return {};
   const doctor = toDoctor(row.doctor);
   const clinic = row.doctor.clinic ?? 'Sin clínica';
-  if (row.status === 'pending') {
-    return {
-      request: {
-        id: row.request_id,
-        doctor,
-        clinic,
-        reason: row.reason ?? 'Quiere ver tu historia clínica.',
-        requestedAt: Date.parse(row.created_at),
-      },
-    };
-  }
-  if (row.status === 'approved') {
+  const asRequest = (): AccessRequest => ({
+    id: row.request_id,
+    doctor,
+    clinic,
+    reason: row.reason ?? 'Quiere ver tu historia clínica.',
+    requestedAt: Date.parse(row.created_at),
+  });
+  if (row.status === 'pending') return { request: asRequest() };
+  if (row.status === 'approved' || row.status === 'revoked' || (row.status === 'expired' && row.records.length > 0)) {
     const expiresAt = row.granted_expires_at ? Date.parse(row.granted_expires_at) : 0;
+    const signed = row.records.filter((record) => record.grant_status !== 'missing');
+    // Approved but some grants were never signed (wallet prompt cancelled,
+    // a grant_access failed): it stays in the inbox so approving again
+    // signs only the missing ones (the API resumes the approval).
+    const unsigned = row.status === 'approved' && signed.length < row.records.length && expiresAt > Date.now();
+    const status: GrantStatus =
+      row.status === 'revoked' ? 'revoked' : row.status === 'expired' || expiresAt <= Date.now() ? 'expired' : 'active';
     return {
-      grant: {
-        id: row.request_id,
-        doctor,
-        clinic,
-        scope: FULL_HISTORY,
-        grantedAt: Date.parse(row.resolved_at ?? row.created_at),
-        expiresAt,
-        status: expiresAt <= Date.now() ? 'expired' : 'active',
-        grantPdas: row.records.map((record) => record.grant_pda),
-      },
+      request: unsigned ? asRequest() : undefined,
+      grant:
+        signed.length > 0
+          ? {
+              id: row.request_id,
+              doctor,
+              clinic,
+              scope: FULL_HISTORY,
+              grantedAt: Date.parse(row.resolved_at ?? row.created_at),
+              expiresAt,
+              status,
+              // Only grants still active on-chain can be revoked.
+              grantPdas: signed.filter((record) => record.grant_status !== 'revoked').map((record) => record.grant_pda),
+            }
+          : undefined,
     };
   }
   return {};
@@ -271,7 +287,11 @@ export async function rejectRequest(id: string, deps?: Pick<TxDeps, 'post'>): Pr
  * carries no PDAs) the sample wait stands in.
  */
 export async function revokeGrant(grant: Pick<Grant, 'id' | 'grantPdas'>, deps?: TxDeps, signer?: string): Promise<void> {
-  if (deps && signer) {
+  if (deps) {
+    // Never fall through to the demo path with a live API: no wallet or no
+    // grant to revoke must fail, not report a revocation that never happened.
+    if (!signer) throw new Error('wallet-unavailable');
+    if (grant.grantPdas.length === 0) throw new Error('nothing-to-revoke');
     const { runTx } = await import('@/components/onchain/tx-flow');
     for (const grantPda of grant.grantPdas) {
       // The patient signs each revoke in turn, so the awaits stay sequential.
@@ -303,7 +323,7 @@ export async function requestAccess(
     const created = await deps.post<{ request_id: string }>('/access-requests', {
       patient_code: input.patientCode,
       // The API needs a reason; the UI keeps it optional.
-      reason: input.reason || 'Consulta',
+      reason: input.reason.trim().length >= 3 ? input.reason.trim() : `Consulta${input.reason.trim() ? `: ${input.reason.trim()}` : ''}`,
     });
     return { id: created.request_id };
   }
