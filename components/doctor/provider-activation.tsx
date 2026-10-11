@@ -7,6 +7,7 @@ import { useSaluaWallet } from '@/lib/auth-providers';
 import { useSession } from '@/lib/session-provider';
 import { Tile } from '@/components/tile';
 import { Button } from '@/components/ui/button';
+import { doctorIsVerified } from '@/lib/provider-account';
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com';
 const PROGRAM_ID = process.env.NEXT_PUBLIC_PROGRAM_ID;
@@ -46,8 +47,7 @@ export function ProviderActivation() {
       const acc = await providerAccount(wallet.address);
       if (!acc) setPhase('missing');
       else {
-        // Provider layout: disc(8) + authority(32) + type(1) + verified(1)
-        const verified = atob(acc.data[0]).charCodeAt(49) === 1;
+        const verified = doctorIsVerified(acc, PROGRAM_ID!, wallet.address);
         setPhase(verified ? 'ready' : 'pending-verify');
       }
     } catch {

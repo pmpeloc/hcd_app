@@ -1,4 +1,4 @@
 import { defineConfig } from '@playwright/test';
 
 // Transport tests run in Node; no browser or live backend is needed.
-export default defineConfig({ testDir: './e2e', testMatch: ['api.spec.ts', 'patient-registration.spec.ts'] });
+export default defineConfig({ testDir: './e2e', testMatch: ['api.spec.ts', 'patient-registration.spec.ts', 'provider-account.spec.ts'] });
