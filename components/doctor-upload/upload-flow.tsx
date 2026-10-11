@@ -506,7 +506,15 @@ export function UploadFlow({ code }: { code: string }) {
             )}
             {status === 'done' && (
               <>
-                <Button size="lg" onClick={reset} className="w-full">
+                {result && (
+                  <Button asChild size="lg" className="w-full">
+                    <Link href={`/visor/${result.recordId}`}>
+                      <FileText aria-hidden="true" />
+                      Ver el estudio
+                    </Link>
+                  </Button>
+                )}
+                <Button size="lg" variant={result ? 'outline' : 'default'} onClick={reset} className="w-full">
                   <Upload aria-hidden="true" />
                   Cargar otro estudio
                 </Button>

@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { originLabel } from '@/components/patient-studies/studies-source';
 import { getSupabaseClient } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { createApiClient } from '@/lib/api-client';
 import { DocumentCanvas } from './document-canvas';
 import { openRecord, OpenError, type DocKind, type OpenErrorReason, type OpenPhase } from './open-record';
 import { DEMO_RECORDS_ENABLED, depsFor, getViewerRecord, isDemoRecord, type ViewerRecord } from './viewer-source';
@@ -102,7 +103,7 @@ export function RecordViewer({ recordId }: { recordId: string }) {
     const alive = () => generation.current === gen;
     setState({ phase: 'loading' });
     setOpenedAt(Date.now());
-    const meta = await getViewerRecord(recordId, demo).catch(() => null);
+    const meta = await getViewerRecord(recordId, demo, demo ? undefined : { get: createApiClient().get }).catch(() => null);
     if (!alive()) return;
     setRecord(meta);
     if (meta?.grant && meta.grant.expiresAt <= Date.now()) {
