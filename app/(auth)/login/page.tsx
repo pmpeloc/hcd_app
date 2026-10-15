@@ -1,17 +1,25 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { AuthProviders, useSaluaWallet } from '@/lib/auth-providers';
 import { useSession } from '@/lib/session-provider';
 import { getSupabaseClient } from '@/lib/supabase';
+import { registrationDestination } from '@/lib/patient-registration';
 
 function LoginContent() {
   const { session, loading, error: sessionError } = useSession();
   const wallet = useSaluaWallet();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  // Keep this provider mounted until registration is confirmed.
+  useEffect(() => {
+    const destination = registrationDestination(wallet.enrolled, wallet.registration, wallet.role);
+    if (session && destination) router.replace(destination);
+  }, [session, wallet.enrolled, wallet.registration, wallet.role, router]);
   async function emailLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(''); setMessage('');
     try {
@@ -56,7 +64,11 @@ function LoginContent() {
             <p className="mt-2 break-all text-sm" aria-label="Wallet address">{wallet.address}</p>
             {wallet.error
               ? <><p role="alert" className="mt-2 text-sm text-red-700">{wallet.error}</p><button className="mt-2 underline" onClick={wallet.retry}>Retry wallet setup</button></>
-              : <p role="status" className="mt-2 text-sm text-slate-600">{wallet.enrolled ? 'Linked to your account.' : wallet.enrolling ? 'Linking it to your account…' : 'Preparing…'}</p>}
+              : <p role="status" className="mt-2 text-sm text-slate-600">{wallet.enrolled
+                ? wallet.registration === 'confirmed' ? 'Your account is ready.'
+                  : wallet.registration === 'registering' ? 'Confirm the registration in your wallet…'
+                    : 'Checking your patient registration…'
+                : wallet.enrolling ? 'Linking it to your account…' : 'Preparing…'}</p>}
           </>
             : wallet.error ? <><p role="alert" className="mt-2 text-sm text-red-700">{wallet.error}</p><button className="mt-3 underline" onClick={wallet.retry}>Retry wallet setup</button></>
               : <p role="status" className="mt-2 text-sm">Preparing your wallet…</p>}
