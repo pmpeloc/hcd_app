@@ -57,14 +57,50 @@ function demoRecord(id: string, now: number): ViewerRecord {
   };
 }
 
+type ApiRecordMeta = {
+  id: string;
+  title: string | null;
+  study_date: string | null;
+  origin: 'issued' | 'digitized' | null;
+  issuer_name: string | null;
+  issuer_org: string | null;
+  created_at: string;
+  patient: string;
+  grant: { granted_at: string | null; expires_at: string | null } | null;
+};
+
 /**
  * The study's details. Demo ids return sample data, but only in demo mode:
  * in production a synthetic id must behave like any unknown record id
  * (a real `/keys/release` 404), never render a fake "verified" study.
- * Placeholder for real ids: needs the record's metadata and the doctor's grant from the API.
+ * Real ids resolve through `GET /records/:id` — metadata only, authorized
+ * for the owner, the issuer or a grant holder.
  */
-export async function getViewerRecord(id: string, demo: boolean): Promise<ViewerRecord | null> {
-  return demo && isDemoRecord(id) ? demoRecord(id, Date.now()) : null;
+export async function getViewerRecord(
+  id: string,
+  demo: boolean,
+  deps?: { get: <T>(path: string) => Promise<T> },
+): Promise<ViewerRecord | null> {
+  if (demo && isDemoRecord(id)) return demoRecord(id, Date.now());
+  if (!deps) return null;
+  const meta = await deps.get<ApiRecordMeta>(`/records/${id}`);
+  return {
+    id: meta.id,
+    studyName: meta.title ?? 'Estudio sin título',
+    patient: { name: meta.patient, code: '' },
+    origin: meta.origin === 'digitized'
+      ? { type: 'digitized', by: meta.issuer_name ?? meta.issuer_org ?? 'Desconocido' }
+      : { type: 'issued', by: meta.issuer_org ?? meta.issuer_name ?? 'Desconocido' },
+    signedBy: meta.issuer_name ?? meta.issuer_org ?? 'Desconocido',
+    uploadedAt: Date.parse(meta.created_at),
+    grant:
+      meta.grant?.expires_at != null
+        ? {
+            grantedAt: meta.grant.granted_at ? Date.parse(meta.grant.granted_at) : Date.parse(meta.created_at),
+            expiresAt: Date.parse(meta.grant.expires_at),
+          }
+        : null,
+  };
 }
 
 // --- Demo file: a synthetic report, encrypted for real on every open ----------------------------
