@@ -58,11 +58,7 @@ export default function DoctorAccessPage() {
   const [now, setNow] = useState(Date.now);
 
   useEffect(() => {
-    if (loading) return;
-    if (!session) {
-      setRecords(DEMO_DATA ? [] : null);
-      return;
-    }
+    if (loading || !session) return;
     let live = true;
     void createApiClient()
       .get<DoctorAccess>('/doctors/me/records')
@@ -78,6 +74,8 @@ export default function DoctorAccessPage() {
   }, [session, loading]);
 
   const demo = !session && DEMO_DATA;
+  // Signed-out views never show a previous session's records.
+  const shown = session ? records : null;
   return (
     <>
       <h1 className="text-[28px] lg:text-[34px] lg:tracking-[-0.03em]">Mis accesos</h1>
@@ -106,15 +104,15 @@ export default function DoctorAccessPage() {
               </li>
             ))}
           </ul>
-        ) : records === null ? (
+        ) : shown === null ? (
           <p className="py-6 text-sm text-muted-foreground">Cargando…</p>
-        ) : records.length === 0 ? (
+        ) : shown.length === 0 ? (
           <p className="py-6 text-sm text-muted-foreground">
             Todavía no tenés accesos. Cuando un paciente te apruebe o cargues un estudio, aparece acá.
           </p>
         ) : (
           <ul>
-            {records.map((record) => (
+            {shown.map((record) => (
               <li key={record.id} className="border-b border-salua-mute-soft last:border-b-0">
                 <Link
                   href={`/visor/${record.id}`}

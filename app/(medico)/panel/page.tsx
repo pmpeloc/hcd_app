@@ -4,7 +4,6 @@ import { ShellFirstName } from '@/components/app-shell/session-shell';
 import { PanelTiles } from '@/components/doctor/panel-tiles';
 import { ProviderActivation } from '@/components/doctor/provider-activation';
 import { ScanLine, Upload } from 'lucide-react';
-import { Tile } from '@/components/tile';
 import { Button } from '@/components/ui/button';
 
 const DOCTOR = { clinic: 'Clínica del Sol' };
